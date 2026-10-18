@@ -3,6 +3,80 @@
 Output of each version: `build/Galaxian_Coop.nes` from `Galaxian (Japan).nes`
 (SHA-256 `1188cedf…3613e`). Earlier versions can be rebuilt from their git commit.
 
+## 2026-10-18 – RC5: player visual identity (branch `game/galaxian-coop`)
+
+Result: SHA-256 `d83b98968846b24a91d17a8564df82e5c354909b3806b5a932f28dee2f6c0c03`, `patches/Galaxian_Coop.bps` (4735 bytes). After the RC4 tests on the
+manual emulator testing (11/12 PASS; FAIL: P1 yellow and P2 orange shots too easy to confuse; the ships
+look too much alike).
+
+### Changed
+- **P1's shots bright green** `$2A` (were yellow `$28`), all levels, lasers too, 1 PILOT included; P2's
+  stay orange `$27`. Same palette byte as RC4 (`$E1CF`, sprite palette 2 colour 3). `$2A` is much lighter
+  than the green aliens (`$1A`) and unlike the white enemy bullets.
+- **P2's own ship**: delta nose with a white cockpit instead of the round dome, flat-topped pods,
+  split tail fins; same colours (orange, blue, white), same 13 × 16 box and centre, same 4 sprites,
+  same hit boxes and positions. P1's ship is unchanged (it uses the HUD's background palette, see
+  REVERSE_ENGINEERING.md §7).
+- Side effect (as in RC4, other colour): 2 px of a diving purple alien are green instead of orange.
+
+### Not changed
+- Program code: the PRG differs from RC4 only by the palette byte (data). Speeds, slots, damage,
+  scoring, overdrive time and sounds are as in RC4. Tracer: identical RAM, APU writes and CPU cycles
+  over 20 000 frames.
+
+### Tests
+- 7 new cynes tests (ship pictures pixel by pixel, P2's OAM use, hit boxes, laser shape and colours,
+  enemy colours in real play, shield blink pictures, HUD in overdrive); `test_shot_colours` rewritten;
+  FCEUmm: shot hue check and a ship silhouette test. Screenshots in `build/screenshots/`
+  (`tools/nestest.save_png`).
+
+## 2026-10-18 – RC4: score HUD fix, overdrive, shot colours, stage counter (branch `game/galaxian-coop`)
+
+Result: SHA-256 `423f4be6d698caeff618a6a035cdd752eb007ffa8281c5af60a0f715be25af6c`,
+`patches/Galaxian_Coop.bps` (4735 bytes). Bugs and requests after RC3 tests in manual emulator testing.
+
+### Fixed
+- **Wrong characters in P1's score** ("2130G0", "4140.0", extra tiles after 14530): RC3 had put two
+  variables at `$011D/$011E`, which the original copies with the score row into the HUD (`E307`), so
+  the dive toggle and a 0 showed right of P1's score (letters are red in that palette). RC2 had also
+  put the shield and HUD flag at `$0126–$0128`, which the original writes to the title screen after GAME
+  OVER. The score values in RAM were always right. All five variables moved to unused RAM; `build.py`
+  now checks new variables against a traced list of the RAM the original uses (`src/original_ram.txt`).
+- **Lasers 1 px left of the ship's centre** (also of the x the hit tests use): new centred laser tile.
+- **Shots started 1–2 px behind a moving ship** (both pilots): shots are fired after the ships moved.
+- **W4 lasers could pass through a diving enemy** (tested every other frame, 12.8 px apart vs a 13-px
+  window): lasers have a 17-px window, matching the 4 px longer laser sprite.
+- Test helper `nametable()` read the wrong offset of the cynes state (one RC2 test compared other bytes).
+
+### Changed
+- **W3**: 4000 boost points counted from when W2 was given (was 5000); no surplus carried over.
+- **Free W2 also for a pilot waiting for its ship**: a pilot hit just before the first stage clear in
+  co-op, with a reserve ship coming (exploding or waiting), now gets the free W2 and comes back with it;
+  only a pilot hit on its last ship or already out gets none (was: only pilots in play at that moment).
+- **W2 kept after a death** once unlocked (W1 only if never unlocked); same for a revive by SELECT. A death
+  resets W3 progress, no-death points and overdrive.
+- **W4 is now "Red Laser Overdrive"**: 30 s of play (pause and stage changes don't count), once per life,
+  then W3; lasers in flight finish with their speed and look; x2 points for the pilot's own kills; rising
+  jingle on activation (triangle) and a laser zap per shot (pulse 2); enemies more aggressive while any
+  overdrive runs (+25 % attack attempts, solo attacks not held back by the flagship window, dives ~14 %
+  faster, dives and enemy shots biased toward the overdrive pilot); nothing stays after it ends.
+- **Shot colours**: P1 yellow, P2 orange on all levels (sprite palette 2 colour 3 → yellow `$28`).
+- **HUD row 2**: stage counter `STG 01` (co-op) and each pilot's overdrive countdown `W4 30s`; messages now
+  use row 1 only ("W4 RED LASER" second line dropped; the countdown shows W4).
+- CPU: HUD buffer streamed every 4th frame (whole HUD within 8 frames), score copy in the two frames
+  after a kill, cheaper diver hit loop. Worst frames: see TESTING.md.
+
+### Not reproduced
+- "Not all P2 shots on W2–W4 start at the ship": no case in cynes or FCEUmm (RAM, OAM and pixels, every
+  slot, moving ships); the two real offsets found (laser 1 px left, shots 1–2 px behind a moving ship) are
+  fixed.
+- "Both living pilots don't always get W2 after stage 1": in 45 natural stage-1 clears a pilot missed W2
+  only when exploding or waiting for its next ship at that moment (P1's next ship waits until all divers
+  are back, which can take long in co-op).
+
+### Tests
+- cynes: 82 tests (21 new, 7 updated for the changed rules), FCEUmm: 4 (1 new), tracer (sound, tune RAM): 4 (new).
+
 ## 2026-10-18 – RC3: ghost shots, weapon parity, frame budget (branch `game/galaxian-coop`)
 
 Result: SHA-256 `aa33c6b037254a197cf78a29510db75391c6a95f151b2dcf99c9ea9c5a851e8d`,

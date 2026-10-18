@@ -30,22 +30,59 @@ CHR_SIZE = 0x2000
 # at tile $10 (also blank) frees $E1/$EA for the P2 ship.
 LOGO_CELLS = {0x155F: 0xE1, 0x1568: 0xEA}
 P2_TILES = (0xE1, 0xEA)                 # top half, bottom half
-SHIP_BG_TILES = (0x62, 0x60, 0x63, 0x61)  # BG table: TL, TR, BL, BR
-# BG colour index -> sprite colour index (sprite palette 0 = $30,$11,$27)
-SHIP_COLOR_MAP = {0: 0, 1: 3, 2: 2, 3: 1}
-# W4 red laser: sprite tile $60 (never shown by the original: no code uses it
+SHIP_BG_TILES = (0x62, 0x60, 0x63, 0x61)  # BG table: TL, TR, BL, BR (P1's ship)
+# P2's own ship (RC5; RC1-RC4: a copy of P1's): the same 13 x 16 box, centre
+# column 8 and twin pods, with a swept delta nose and white cockpit instead
+# of the round dome, flat-topped pods and split tail fins. Sprite palette 0:
+# 1 = white $30, 2 = blue $11, 3 = orange $27. Drawn as the left half
+# (columns 1-8) twice, the right one H-flipped, so it must be symmetric.
+P2_PIXELS = ['........3.......',
+             '.......333......',
+             '......33333.....',
+             '.....3313133....',
+             '....33.131.33...',
+             '...2...131...2..',
+             '..222..131..222.',
+             '..212..131..212.',
+             '..212.11311.212.',
+             '..2121113111212.',
+             '..2111113111112.',
+             '..2121.131.1212.',
+             '..212.11.11.212.',
+             '..212.......212.',
+             '..222.......222.',
+             '..2.2.......2.2.']
+# W4 laser: sprite tile $60 (never shown by the original: no code uses it
 # as a tile, unseen in title/attract/demo/play, outside the CHR ranges the
-# reset code copies to RAM). Drawn with sprite palette 1: 1 = red, 3 = orange.
+# reset code copies to RAM). One colour (3) so each pilot's palette gives
+# it the pilot's colour (P1 palette 2 = green, P2 palette 0 = orange). Its
+# centre column is 4, like the bullet tile $30 (RC1-RC3: column 3, 1 px left
+# of the ship's centre and of the x the hit tests use).
 LASER_TILE = 0x60
 LASER_ORIG = bytes.fromhex('60000c006a0009003a003000c9000907')
-LASER_PIXELS = ['...3....',
-                '..131...',
-                '..131...',
-                '..131...',
-                '..131...',
-                '..131...',
-                '..131...',
-                '...1....']
+LASER_PIXELS = ['....3...',
+                '...333..',
+                '...333..',
+                '...333..',
+                '...333..',
+                '...333..',
+                '...333..',
+                '....3...']
+
+# Lower-case "s" for the overdrive countdown ("W4 30s", HUD row 2): background
+# tile $36 of table $1000 (a one-dot tile). No nametable of the game uses it
+# (traced runs of title, demo, 1P/2P games, game over, end screen: tile
+# values written to $2000 and $2800). Colour 1, like the font's letters.
+SECONDS_TILE = 0x36
+SECONDS_ORIG = bytes.fromhex('00 00 00 00 08 00 00 00 00 00 00 00 08 00 00 00')
+SECONDS_PIXELS = ['........',
+                  '........',
+                  '........',
+                  '..11111.',
+                  '.11.....',
+                  '..1111..',
+                  '.....11.',
+                  '.11111..']
 
 
 def tile_pixels(chr_data, table, idx):
@@ -60,12 +97,25 @@ def encode_tile(rows):
     return lo + hi
 
 
-def build_p2_tiles(chr_data):
+def p1_ship(chr_data):
+    """P1's ship (BG tiles) as 16 rows of 16 colour indices."""
     tl, tr, bl, br = (tile_pixels(chr_data, 1, t) for t in SHIP_BG_TILES)
-    ship = [tl[y] + tr[y] for y in range(8)] + [bl[y] + br[y] for y in range(8)]
+    return [tl[y] + tr[y] for y in range(8)] + [bl[y] + br[y] for y in range(8)]
+
+
+def bounding_box(ship):
+    cols = [x for row in ship for x, p in enumerate(row) if p]
+    rows = [y for y, row in enumerate(ship) if any(row)]
+    return min(cols), max(cols), min(rows), max(rows)
+
+
+def build_p2_tiles(chr_data):
+    ship = [['.123'.index(c) for c in row] for row in P2_PIXELS]
     for row in ship:  # symmetric about column 8, so the left half + H-flip rebuilds it
-        assert row[0] == 0 and all(row[8 - k] == row[8 + k] for k in range(1, 8)), 'ship not symmetric'
-    half = [[SHIP_COLOR_MAP[p] for p in row[1:9]] for row in ship]
+        assert len(row) == 16 and row[0] == 0 and all(row[8 - k] == row[8 + k] for k in range(1, 8)), \
+            'P2 ship not symmetric'
+    assert bounding_box(ship) == bounding_box(p1_ship(chr_data)), 'P2 ship size differs from P1'
+    half = [row[1:9] for row in ship]
     return encode_tile(half[:8]), encode_tile(half[8:])
 
 
@@ -77,6 +127,9 @@ def patch_chr(chr_data):
     off = LASER_TILE * 16
     assert chr_data[off:off + 16] == LASER_ORIG, 'sprite tile $60 is not the expected original'
     chr_data[off:off + 16] = encode_tile([['.123'.index(c) for c in row] for row in LASER_PIXELS])
+    off = 0x1000 + SECONDS_TILE * 16
+    assert chr_data[off:off + 16] == SECONDS_ORIG, 'BG tile $36 is not the expected original'
+    chr_data[off:off + 16] = encode_tile([['.123'.index(c) for c in row] for row in SECONDS_PIXELS])
     top, bot = build_p2_tiles(chr_data)
     for tile, data in zip(P2_TILES, (top, bot)):
         off = tile * 16
@@ -96,7 +149,8 @@ MLB_RAM = ('PAD1', 'PAD2', 'SHIP_X', 'P1_DEAD', 'STATE', 'SUBSTATE', 'CUR_PLAYER
            'P1_GRANTED', 'TITLE_STEP', 'P1_REDRAW', 'BUL_Y', 'BUL_X', 'BUL_F', 'WLEVEL',
            'BOOST_LO', 'BOOST_HI', 'NEXT_LIFE_LO', 'NEXT_LIFE_HI', 'STAGE1_DONE', 'NODEATH_LO',
            'NODEATH_HI', 'DCOUNT', 'BANNER_CUR', 'BANNER_ROW', 'W4_TIMER', 'W4_WHO', 'DI',
-           'DLIST', 'HIT_DONE', 'SHOT_N', 'LOGIC_RAN', 'LASTK', 'LAG_COUNT', 'LAG_TOTAL', 'SHIELD', 'SCORE_NEW')
+           'DLIST', 'HIT_DONE', 'SHOT_N', 'LOGIC_RAN', 'LASTK', 'LAG_COUNT', 'LAG_TOTAL', 'SHIELD', 'SCORE_NEW',
+           'W2_OWNED', 'W4_USED', 'W4_SEC', 'W4_FRM', 'BUL_LV', 'STG_SHOWN', 'TMR_SHOWN', 'BY_SHOT', 'OD_SND')
 
 
 # new RAM: name -> size; build fails if two of them overlap
@@ -107,7 +161,8 @@ RAM_SIZES = {'COOP': 1, 'P1_OUT': 1, 'P1_BLOCK': 1, 'P2_STATE': 1, 'P2_X': 1, 'P
              'BANNER_CUR': 1, 'BANNER_ROW': 1, 'W4_TIMER': 1, 'W4_WHO': 1, 'BOOST_LO': 2,
              'BOOST_HI': 2, 'DI': 1, 'NEXT_LIFE_LO': 2, 'NEXT_LIFE_HI': 2, 'BUL_F': 8, 'DLIST': 7,
              'HIT_DONE': 1, 'SHOT_N': 1, 'LOGIC_RAN': 1, 'LASTK': 2, 'LAG_COUNT': 1, 'SHIELD': 2, 'SCORE_NEW': 1,
-             'PS_MASK2': 1, 'LAG_TOTAL': 1}
+             'PS_MASK2': 1, 'LAG_TOTAL': 1, 'OD_SND': 1, 'W2_OWNED': 2, 'W4_USED': 2, 'W4_SEC': 2,
+             'W4_FRM': 2, 'BUL_LV': 8, 'STG_SHOWN': 1, 'TMR_SHOWN': 2, 'BY_SHOT': 1, 'DIVE_CELL': 7, 'DIVE_RR': 1}
 
 
 # Zero-page addresses the original program reads or writes directly (from the
@@ -119,7 +174,20 @@ ORIGINAL_ZP = {int(a, 16) for a in """
     E5 E8 E9 EA EB EC ED EE EF F0 F1 F2 F6 F7 FA FB FD FE FF""".split()}
 
 
+def original_ram():
+    """RAM the original program uses at run time (src/original_ram.txt, from
+    traced runs) plus the stack $0130-$014D."""
+    used = set(range(0x130, 0x14E))
+    for line in (GAME / 'src' / 'original_ram.txt').read_text().splitlines():
+        line = line.split('#')[0].strip()
+        if line:
+            a, _, b = line.partition('-')
+            used |= set(range(int(a, 16), int(b or a, 16) + 1))
+    return used
+
+
 def check_ram(asm):
+    traced = original_ram()
     used = {}
     for name, size in RAM_SIZES.items():
         base = asm.symbols[name]
@@ -129,9 +197,21 @@ def check_ram(asm):
             used[a] = name
             if a in ORIGINAL_ZP:
                 raise SystemExit(f'{name} uses ${a:02X}, which the original game uses')
-    # PreSplit is cycle-counted: it and its tables must stay in one page
-    if asm.symbols['PreSplit'] >> 8 != (asm.symbols['PreSplitEnd'] - 1) >> 8:
-        raise SystemExit('PreSplit crosses a page boundary')
+            if a in traced:
+                raise SystemExit(f'{name} uses ${a:04X}, which the original game uses at run time')
+    # PreSplit is cycle-counted: its code and its tables each stay in one page
+    for start, end in (('PreSplit', 'PreSplitCodeEnd'), ('PreSplitTables', 'PreSplitEnd')):
+        if asm.symbols[start] >> 8 != (asm.symbols[end] - 1) >> 8:
+            raise SystemExit(f'{start} crosses a page boundary')
+
+
+def check_segments(segments):
+    """No two blocks of new code may overlap (a grown routine running into
+    the next .org block would be silently overwritten)."""
+    spans = sorted((seg.org, seg.org + len(seg.data)) for seg in segments if seg.org < 0xE000 and seg.data)
+    for (a0, a1), (b0, b1) in zip(spans, spans[1:]):
+        if b0 < a1:
+            raise SystemExit(f'code blocks overlap: ${a0:04X}-${a1 - 1:04X} and ${b0:04X}')
 
 
 def mesen_labels(asm):
@@ -179,6 +259,7 @@ def build(rom_path, out_path, bps=False):
     asm = Assembler()
     segments = assemble(asm)
     check_ram(asm)
+    check_segments(segments)
     new_prg = patch_prg(prg, segments)
     new_chr = patch_chr(chr_data)
 

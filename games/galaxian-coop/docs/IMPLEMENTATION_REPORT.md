@@ -1,12 +1,345 @@
-# Galaxian Coop – raport z implementacji (RC3)
+# Galaxian Coop – raport z implementacji (RC5)
 
 Data: 2026-10-18. Branch: `game/galaxian-coop` (bez merge do `main`, bez remote, bez push).
-Wersja: **RC3** – strzały-duchy, parytet broni P1/P2, budżet CPU i sprostowanie pomiarów.
-Sekcja R3 opisuje RC3, sekcja 0 – RC2, sekcje 1–9 – RC1 (specyfikacja v1.0). Starsze sekcje są nadal
-aktualne poza miejscami poprawionymi w nowszych; **wszystkie liczby „najgorszej klatki” z RC1 i RC2 są
-nieważne** (artefakt pomiaru, R3.4).
+Wersja: **RC5** – tożsamość wizualna pilotów: zielone pociski P1, własna sylwetka statku P2.
+RC4: naprawa HUD wyniku, Red Laser Overdrive (W4 na 30 s, ×2, dźwięki, agresja wrogów),
+trwałe W2, W3 za 4000, kolory pocisków P1/P2, wyśrodkowane lasery, licznik etapu i odliczanie W4.
+Sekcja R5 opisuje RC5, R4 – RC4, R3 – RC3, sekcja 0 – RC2, sekcje 1–9 – RC1. Starsze sekcje są aktualne poza
+miejscami poprawionymi w nowszych (np. W3 za 5000 i W4 na stałe – zmienione w RC4).
 Autor moda: Zvgelo. Szczegóły techniczne: [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md),
 [MEMORY_MAP.md](MEMORY_MAP.md), testy i pomiary: [TESTING.md](TESTING.md).
+
+## R5. RC5 – tożsamość wizualna pilotów
+
+### R5.1 Pliki
+
+| Plik | Ścieżka | SHA-256 |
+|---|---|---|
+| ROM RC5 (nie w git) | `games/galaxian-coop/build/Galaxian_Coop.nes` (40 976 B) | `d83b98968846b24a91d17a8564df82e5c354909b3806b5a932f28dee2f6c0c03` |
+| Etykiety Mesen 2 (nie w git) | `games/galaxian-coop/build/Galaxian_Coop.mlb` | – |
+| Łatka BPS (w git) | `games/galaxian-coop/patches/Galaxian_Coop.bps` (4 735 B) | nałożona na oryginał daje plik identyczny bajt w bajt (sprawdzone) |
+| Zrzuty (nie w git) | `games/galaxian-coop/build/screenshots/` | `ships.png`, `w4_w4.png` (z testów), `compare_*.png` (przed/po) |
+
+Wyniki RC4 z testu manualnego na emulatorze: 11/12 PASS. FAIL: żółte pociski P1 i pomarańczowe P2 łatwo pomylić; uwaga:
+statki P1 i P2 zbyt podobne.
+
+### R5.2 Analiza palet, CHR i OAM
+
+Przeanalizowałem wszystkie sprite'y rysowane w 36 000 klatkach gry (co-op i 1P): kafel × paleta ×
+indeks koloru (tabela w REVERSE_ENGINEERING.md §7). Wnioski:
+- Każda paleta sprite'ów ma zajęte wszystkie 3 kolory. Kolor 3 (`$27`) wszędzie jest pomarańczowy.
+  Paleta 0: statek P2, jego pociski, białe pociski wrogów (kolor 1), punkty za flagowce. Palety 1–3:
+  czerwoni, fioletowi i zieloni nurkujący (kolor 3 = 1 piksel w dwóch z czterech kafli, czyli 2 px na
+  obcego). Paleta 1 to dodatkowo flagowce i eksplozje (kolor 3 na wielu pikselach).
+- Gwiazdy (kafel `$32`) używają tylko koloru 1, więc zmiana koloru 3 ich nie dotyka.
+- Statek P1 to tło w palecie BG 0, tej samej co tekst HUD (czerwony `$16`, biały `$30`, cyjan `$2C`).
+  Pozostałe palety BG mają jako kolor 2 niebieski `$11`. Przestawienie atrybutu wierszy statku na inną
+  paletę dałoby mu niebieskie gondole zamiast białych, a zmiana palety BG 0 przemalowałaby HUD.
+
+### R5.3 Kolory (konkretne kolory NES)
+
+- **P1: `$2A`, jasna, intensywna zieleń** (w cynes RGB 76, 208, 32). Ten sam bajt co w RC4: `$E1CF`,
+  paleta sprite'ów 2, kolor 3 (`$28` → `$2A`). Wyraźnie jaśniejsza od zielonych obcych `$1A`
+  (RGB 8, 124, 0) i różna od białych pocisków wrogów `$30`.
+- **P2: `$27`, ciepły pomarańcz** (RGB 212, 136, 32), paleta 0, kolor 3, bez zmian.
+- Warianty odrzucone. Paleta 3 zmieniłaby częstszych zielonych obcych, paleta 1 eksplozje i flagowce,
+  paleta 0 nos statku P2 i jego pociski. `$1A`/`$19` jest za bliski zielonym obcym, `$3A` za blady.
+- **Skutek uboczny**: 2 piksele nurkującego fioletowego obcego są zielone (w oryginale pomarańczowe,
+  w RC4 żółte). Formacja i pozostali obcy są bez zmian, co sprawdza test pikseli w realnej grze.
+
+### R5.4 Statek P2
+
+- **Nowa sylwetka P2** (`build.P2_PIXELS`, kafle `$E1`/`$EA`, rysowana jak dotąd jako lewa połówka i jej
+  lustrzane odbicie):
+  - spiczasty nos w kształcie delty z białą kabiną zamiast okrągłej kopuły;
+  - gondole ze ściętym, płaskim szczytem;
+  - rozdzielone stateczniki ogonowe.
+- **Kolory P2:** te same (pomarańczowy, niebieski, biały).
+- **Kontrole w `build.py`:** symetria oraz identyczny prostokąt jak u P1 (kolumny 2–14, wiersze 0–15).
+  Środek, pozycje OAM (x = P2_X + `$79`, y `$D0`), hitboksy (kod bez zmian) i liczba sprite'ów (4) są
+  takie jak w RC4.
+- **P1:** kolory statku zostają, zgodnie z zasadą ze specyfikacji (statek P1 korzysta ze wspólnej palety
+  tła). Statki rozróżnia sylwetka P2 oraz kolory pocisków.
+
+### R5.5 Zrzuty przed/po (`build/screenshots/`)
+
+- `compare_ships_rc4_rc5.png`: statki RC4 (góra) i RC5 (dół), ×8, ten sam zapisany stan.
+- `compare_w4_rc4_rc5.png`: scena W4/W4, ta sama klatka w RC4 i RC5 (×2).
+- `compare_purple_diver_orig_rc4_rc5.png`: nurkujący fioletowy obcy: oryginalny kolor, RC4, RC5 (×10).
+- `ships.png`, `w4_w4.png`: z testów RC5 (statki obok siebie; obaj piloci w Overdrive w realnej grze).
+
+Porównania powstały z jednego stanu zapisanego w cynes. RC4 i RC5 mają ten sam kod, a paleta jest
+podstawiona w stanie, więc różnią się tylko grafiką.
+
+### R5.6 Respawn Shield
+
+Miganie bez zmian (ten sam kod). Test `test_shield_blink_silhouettes` sprawdza w każdej klatce
+4-sekundowego migania, że statek jest albo dokładnie swoim obrazem, albo w ogóle niewidoczny: bez
+częściowych kafli i bez mieszania obrazów. Partner przez cały czas jest dokładny. Po tarczy oba statki
+są dokładne, a wiersze nametable P1 są takie jak przed śmiercią.
+
+### R5.7 Testy (wykonane)
+
+- **cynes:** 89/89 OK. Doszło 7 nowych testów, `test_shot_colours` napisany od nowa, żaden
+  wcześniejszy test nie został usunięty:
+  - kolory wszystkich 8 slotów na W1–W4, przy strzelaniu jednoczesnym i naprzemiennym, po śmierci i po
+    Life Sharing;
+  - kształt i kolor laserów;
+  - piksel po pikselu obrazy obu statków w ruchu i przy krawędziach;
+  - układ OAM P2 i brak dodatkowych sprite'ów;
+  - hitboksy (pocisk wroga przesuwany o −12…+12 px: P1 i P2 trafiane z tych samych 11 przesunięć);
+  - kolory wszystkich sprite'ów wrogów w 3000 klatkach realnej gry;
+  - miganie tarczy;
+  - HUD przy W4/W4.
+- **FCEUmm:** 5/5 OK (doszły odcień pocisków i sylwetki statków).
+- **Tracer:** 4/4 OK.
+- Środek pocisków na wizualnej sylwetce P2 i podział rastra sprawdzają testy z RC4
+  (`test_shots_centred_on_ships`, `test_raster_split_below_formation`).
+- Nie testowałem w Mesen 2, RetroArch, w teście manualnym ani na sprzęcie.
+
+### R5.8 Wydajność
+
+- **Kod:** PRG RC5 = PRG RC4 poza bajtem palety. Tracer: 20 000 klatek co-op, ten sam input, identyczny
+  RAM w każdej klatce, identyczne zapisy APU i liczba cykli CPU (606 780 229).
+- **Stress test cynes** (obaj na W4 z agresją, 8 pocisków, ×2, 24 × 3 min):
+  - bez tarcz: najgorsza klatka 96 iteracji (RC4 100);
+  - z tarczami: 73 (RC4 74);
+  - 0 resetów, 0 klatek opóźnienia.
+- **Różnice w liczbach:** cynes startuje z losowego stanu, więc sesje to inne gry niż w RC4.
+  Dlatego RC4 i RC5 uruchomiłem jeszcze krokowo z tego samego zapisanego stanu, z tym samym wejściem: 48 sesji
+  (24 bez tarcz, 24 z tarczami, po 3 min): ilość wolnego czasu CPU identyczna w każdej klatce, te same najgorsze
+  wartości w każdej sesji, 0 klatek z różnicą. Brak regresji wydajności.
+
+### R5.9 Ograniczenia
+
+- 2 piksele fioletowych obcych w nurkowaniu są zielone, a nie pomarańczowe.
+- Statek P1 bez zielonego akcentu: wspólna paleta z HUD.
+- Ikona życia P2 w HUD (kafel tła 8×8) jest dalej uproszczonym statkiem, wspólnym z P1.
+- Zielony P1 i pomarańczowy P2 pochodzą z palety cynes. Na innych emulatorach i na sprzęcie odcienie
+  będą trochę inne (FCEUmm: odcień sprawdzony testem).
+- RC5 nie jest zaakceptowane przed testem manualnym na emulatorze.
+
+## R4. RC4
+
+### R4.1 Pliki
+
+| Plik | Ścieżka | SHA-256 |
+|---|---|---|
+| ROM RC4 (nie w git) | `games/galaxian-coop/build/Galaxian_Coop.nes` (40 976 B) | `423f4be6d698caeff618a6a035cdd752eb007ffa8281c5af60a0f715be25af6c` |
+| Etykiety Mesen 2 (nie w git) | `games/galaxian-coop/build/Galaxian_Coop.mlb` | – |
+| Łatka BPS (w git) | `games/galaxian-coop/patches/Galaxian_Coop.bps` (4 735 B) | `tools/bps.py apply` na oryginale daje plik identyczny bajt w bajt (sprawdzone `cmp`); test `test_bps_patch` sprawdza też, że łatka nie zawiera danych oryginału |
+
+Nowy kod 4 465 B, 160 bajtów oryginału zmienionych w hookach (w tym 1 bajt palety). Oryginalny ROM
+nienaruszony (SHA-256 `1188cedf…3613e`). Zdjęć z testu manualnego nie miałem w tej sesji – diagnoza oparta na opisie
+(odczyty „2130G0”, „4140.0”, P1 X0 14530) i na odtworzeniu w emulatorze.
+
+### R4.2 Glitche punktacji P1 – przyczyna (punkty 1–3 raportu)
+
+**Przyczyna.** Wiersz wyników `$0116–$012F` to w oryginale obszar wyświetlany, nie tylko dane:
+- `E307` (w `E2FE`) kopiuje **15 bajtów `$0117–$0125`** – wynik P1, dwa bajty „luki” `$011D/$011E`,
+  `$011F` i hi-score – do bufora HUD `$06A0`, który `E342` wysyła do wiersza 4 nametable (kolumny 4–18);
+- po GAME OVER `FB70` + `E4AA` zapisują całe 26 bajtów `$0116–$012F` do ekranu tytułowego (`$2883`).
+
+RC3 przeniosło `AIM_TOGGLE` i `P1_REDRAW` na `$011D/$011E` (RC2 umieściło `SHIELD`/`SCORE_NEW` na
+`$0126–$0128`), zakładając, że pisze tam tylko kod resetu. W efekcie w kolumnach 10–11 wiersza 4, tuż za
+wynikiem P1, wyświetlał się licznik naprzemiennego celowania nurkowań (zmienia się przy każdym nurkowaniu)
+i `0` (`P1_REDRAW`). **Czerwone znaki**: w tej palecie HUD litery mają kolor 1 (czerwony), cyfry kolor 2
+(biały); wartości licznika trafiały na kafle liter (`$17` = G) i symboli (`$2C` = kropka), stąd „G” i „.”
+między białymi cyframi, a za nimi `0`. Na ekranie tytułowym po GAME OVER pojawiały się wartości tarcz
+(`$F0`). **RAM wyników nie był uszkodzony** – wyniki, hi-score, progi Extra Life i Weapon Boost liczone
+z RAM były zawsze poprawne; błędne było tylko renderowanie sąsiednich komórek. Komunikat Life Sharing,
+wysoki wynik, kolejka VRAM ani przepełnienie pola nie były przyczyną (sprawdzone testami poniżej).
+
+**Odtworzenie.** Nowe testy na ROM-ie RC3 oblewają dokładnie tak jak zdjęcia: `HUD row 4 … (10, '0x2'),
+(11, '0x0')` przy wyniku 2130 (ekran „2130 20”) oraz kafle `$F0 $F0 $00` na ekranie tytułowym; na RC4
+przechodzą.
+
+**Naprawa.** Pięć zmiennych przeniesione do `$0350–$0354` – wypełnienia `$FF` (`$0347–$037F`) w bloku
+kopiowanym przy resecie z CHR, między tabelą wskaźników tekstów a pierwszym tekstem (nic tam nie wskazuje
+i nic tego nie czyta – audyt). Build sprawdza teraz każdą nową zmienną także z `src/original_ram.txt`
+(RAM używany przez oryginał w czasie działania, z tracera) i ze stosem.
+
+### R4.3 Pociski P2 (punkt 4)
+
+**Nie odtworzyłem błędu w RC3** ani w cynes, ani w FCEUmm. Sprawdziłem każdy z ~2 600 strzałów W2–W4
+(oba emulatory, statki w ruchu): X statku przy naciśnięciu, wybrany slot, `BUL_X`, X w OAM w kolejnych
+klatkach i piksele. Zero anomalii; ten sam detektor na RC2 daje ~3 000 anomalii (stary błąd `$23/$24`).
+Hipoteza limitu 8 sprite'ów na linię: oba emulatory go emulują, ale w naturalnej grze (W1 i W4, 6 000
+klatek) żaden pocisk nie zniknął. Znalazłem i naprawiłem dwa realne przesunięcia, które mogą tłumaczyć
+obserwację:
+1. **Laser W4 był 1 px na lewo** od środka statku i od X używanego w kolizjach (kafel `$60` miał środek
+   w kolumnie 3, pocisk `$30` – w 4). Nowy kafel lasera ma środek w kolumnie 4 i 3 px szerokości.
+2. **Strzał startował z pozycji statku sprzed ruchu w tej klatce** (u obu pilotów): przy ruchu pocisk
+   odstawał 1–2 px od rysowanego statku. Strzał (`FireShot`) przeniesiony do `CoopMid`, po ruchu obu
+   statków.
+
+Testy: cynes – każdy slot, W1 i W4, krawędzie i środek: `BUL_X+4` = środek widocznej sylwetki statku,
+obraz pocisku symetryczny wokół niego; FCEUmm – 3 600 klatek ruchu i strzelania na W1–W4: każdy nowy strzał
+każdego slotu startuje z X statku, X nie zmienia się w locie (RAM i OAM), piksele zgodne. Jedyny wyjątek
+w danych: strzał oddany w klatce zakończenia etapu – statki są wtedy przestawiane na pozycje startowe,
+a pocisk leci z miejsca, w którym statek był.
+
+### R4.4 Darmowe W2 po Stage 1 (punkt 5)
+
+**Nie znalazłem przypadku, w którym żyjący pilot nie dostaje W2.** Prześledziłem sekwencję
+`E937` → `FA52` → `FC1A` → `FC38` (`StageCleared`) → podetapy 4–7 → Stage 2. Oryginał nie ustawia
+chwilowo flag pilota przy przejściu: `$4F` = `$21` tylko na starcie gry, w podetapach 4–7 bez śmierci
+`$4F` = 0, a W nie zmienia się w trakcie przejścia (sprawdzane w każdej klatce). W 45 naturalnych
+ukończeniach Stage 1 (bot steruje oboma statkami, pociski zestrzeliwują formację): obaj w grze → W2/W2
+zawsze; W2 omijało pilota wyłącznie wtedy, gdy w klatce `INC $59` eksplodował lub czekał na statek. Ważny
+szczegół oryginału: po utracie statku P1 (`$4F` = `$22`) jego powrót czeka, aż wszyscy nurkujący wrócą
+do formacji (`E937`), a w co-op P2 walczy dalej – P1 bywa „martwy” kilka sekund. Jeśli P2 wtedy dokończy
+etap, P1 wraca dopiero w Stage 2 z W1. To prawdopodobnie widziany przypadek; zgodnie ze specyfikacją
+(„pilot rzeczywiście martwy … nie otrzymuje bonusu”) zostawiłem tę regułę. **Zmiana po decyzji
+użytkownika (RC4):** darmowe W2 dostaje także pilot trafiony tuż przed końcem etapu, który ma statek w
+rezerwie (eksploduje lub czeka): `PilotComing` `$8632` (w grze, albo trafiony z `LIVES` > 0). Wraca już z
+W2 (`W2_OWNED` = 1, stałe W2). Bez darmowego W2 zostaje pilot wyeliminowany oraz trafiony na ostatnim
+statku. Boost za punkty (W1→W2 poza darmowym, W2→W3) nadal tylko dla pilota żywego i w grze.
+
+### R4.5 Weapon Boost W1–W4 (punkt 6)
+
+| Poziom | Pociski | Prędkość | Warunek (RC4) |
+|---|---:|---:|---|
+| W1 | 1 | 100 % | start; po śmierci, jeśli W2 nigdy nie odblokowane |
+| W2 | 2 | 110 % | 2000 pkt progresji + ukończony etap; co-op: raz za Stage 1; **zachowywane po śmierci** |
+| W3 | 3 | 120 % | **4000 pkt od otrzymania W2** + ukończony etap; nadwyżka nie przechodzi |
+| W4 Overdrive | 4 | 160 % | W3 + 8000 pkt bez śmierci, raz na życie, **30 s**, potem W3 |
+
+Zweryfikowane testami: 3999 → brak W3, 4000 → W3 tylko po ukończeniu etapu; 3500 na W1 → W2, licznik 0;
+darmowe W2 przy 800 pkt i W3 przy łącznym 4800; śmierć z W2/W3/W4 → W2 (jeśli odblokowane), W1 (jeśli nie),
+zerowanie progresji/no-death/Overdrive, potem znów 4000; Life Sharing ta sama reguła; W4 tylko raz na życie
+mimo ≥ 8000 no-death; nowa gra czyści wszystko. Próg osiągnięty w ostatniej klatce przed końcem etapu się
+liczy (punkty dodaje `E913` w tej samej klatce przed `FC1A`).
+
+**Overdrive (W4)**: licznik sekund × 60 klatek (bez dzielenia przy wyświetlaniu), odliczany w `CoopPre`
+tylko w podetapie 8 – pauza, READY/respawn i zmiana etapu nie zużywają czasu, zmiana etapu go nie odnawia;
+zmierzone 1 800 klatek gry. Każdy pocisk pamięta poziom z chwili strzału (`BUL_LV`), więc lasery w locie
+kończą lot jako lasery 160 %; nowe strzały są W3 (3 sloty), czwarty slot nie jest ponownie używany.
+**×2**: `ScoreAdd` liczy punkty z tabel oryginału (`E80F`/`E821`), podwaja je, gdy trafił pocisk
+(`BY_SHOT`) pilota na W4 (cyfry z przeniesieniem do tysięcy `$56`), dodaje raz przez `E841` i raz
+wywołuje `AfterScore` (progresja, no-death, Extra Life, HUD). Zderzenie z wrogiem i bonus Life Sharing +200
+nie są podwajane. Wynik ×2 trafia do hi-score i progów Extra Life (test: 6950 → 7010, +1 życie).
+**Dźwięk**: aktywacja – wznoszące arpeggio B-dur na kanale trójkątnym (nieużywanym przez grę, więc nic
+nie przerywa i nic go nie przerywa), raz na odblokowanie; strzał W4 – krótki „zap” na Pulse 2 (ten sam
+kanał co oryginalny strzał; obwiednia i sweep sprzętowe, nic nie trzeba aktualizować, nie może się
+zawiesić; dwaj piloci w tej samej klatce zapisują te same wartości). Muzyka (Pulse 1) bez zmian – test
+porównuje zapisy z oryginałem.
+**Agresja** (analiza systemu trudności: REVERSE_ENGINEERING.md §5 – tabela dla etapów 1, 2, 5, 10, 20;
+trudność nasyca się od etapu 8): bez trwałej flagi – każdy hook sprawdza `W4_SEC` obu pilotów, więc
+efekt kończy się z ostatnim Overdrive (bez Overdrive przebieg jest bajt w bajt identyczny – test). +25 %
+prób ataku (dodatkowy krok liczników bez timera okrętu flagowego), samotne ataki nie czekają na okno okrętu
+flagowego (limity slotów etapu bez zmian), nurkowanie ~14 % szybsze (+1 px raz na 8 px, nigdy przez linię
+strzału ani strefę trafienia), cel nurkowań i pocisków przesunięty na pilota z W4 (3 z 4). Zmierzone
+(90 s, ten sam stan, P2 w Overdrive): starty nurkowań +41 %, prędkość 1,00 → 1,14 px/kl., nurkowania
+w stronę P2 26 % → 50 %, pociski w stronę P2 7 % → 49 %. Obrażenia i tarcze bez zmian. Przy okazji: laser
+W4 mógł przelatywać przez nurkującego (sprawdzany co 2. klatkę, 12,8 px vs okno 13 px) – okno lasera
+17 px, zgodnie z jego 4 px dłuższym sprite'em.
+
+### R4.6 Kolory pocisków
+
+Każdy kolor każdej palety sprite'ów był zajęty (statek P2 = paleta 0 cała, przeciwnicy = palety 1–3;
+kolor 3 to wszędzie pomarańczowy `$27`). Najmniej widoczna zmiana: paleta 2 kolor 3 → żółty `$28`
+(jeden bajt tabeli palet `$E1CF`, wczytywanej raz przy resecie; zmienia tylko kilka pikseli detali
+fioletowych obcych w czasie nurkowania). P1: paleta 2 (żółty), P2: paleta 0 (pomarańczowy, jak nos jego
+statku), na W1–W4, także w 1 PILOT. Pocisk i laser używają tylko koloru 3, laser zachowuje wydłużony
+kształt (8 px, 3 px szerokości). Test palety: cała pamięć palety = oryginał poza tym jednym bajtem.
+
+### R4.7 Licznik etapu i odliczanie (punkt 7)
+
+Wiersz 2 nametable (linie 17–24) nie jest używany przez oryginał w grze (audyt zapisów VRAM); wiersz 0
+dostaje co klatkę pusty wiersz z `E4C4`, wiersze 3–4 to HUD, a komunikaty przeniosłem do samego wiersza 1.
+Wiersz 2 (co-op): `W4 30s` P1 (kolumny 2–7, nad `W`/`1UP`), **`STG 01`** (kolumny 13–18, nad
+`HI-SCORE`), `W4 30s` P2 (kolumny 22–27, nad `2UP`; kolumny 28–29 mają paletę 1 dla ikony statku P2,
+więc cyfry byłyby niebieskie). Pola są wpisywane przez kolejkę VRAM tylko przy zmianie wartości (sekundy,
+etap) i tylko gdy zapis wierszy jest bezczynny; na starcie gry baner raz czyści cały wiersz 2. Format
+pełny `STG 01` się mieści. Numer = `$59 + 1`, dwie cyfry, do 99, potem 01 (zawijanie oryginału po etapie
+99). Małe „s” to nowy glif w kaflu tła `$36` (nieużywanym przez żadną nametable gry – skan). 1 PILOT:
+oryginalne flagi etapu, bez `STG`. Drugi wiersz komunikatu „W4 RED LASER” zastąpiło odliczanie.
+
+### R4.8 Zmienione procedury 6502 i adresy (punkt 8)
+
+Hooki RC4: `$E1CF` (paleta), `$F45F` `AtkGate`, `$F48B` `SoloGate`, `$EE23` `BulletAimX`, `$FD17`
+`SoundTick`; zmienione działanie hooków `$E833` (`ScoreAdd` ×2), `$E91F` (`CoopMid`: strzał po ruchu,
+`DiveBoost`), `$E2E4` (`HudScores`: kopia 2 klatki po trafieniu, strumień HUD co 4. klatkę), `$EE4E`
+(`AimDiver`). Nowe/zmienione procedury (adresy RC4, `build/Galaxian_Coop.mlb`): `ScoreAdd` `$8489`,
+`ScoreDouble` `$84AC`, `AfterScore` `$84D5`, `ResetBoost` `$843B`, `PilotDown` `$845B`, `StageCleared`
+`$85B5`, `PilotComing` `$8632`, `CheckW4` `$8652`, `W4Tick` `$868F`, `CoopMid` `$86B7`, `FireShot` `$831B`, `DiverHits`
+`$829B`/`DiverHitsX` `$82E7`, `PreSplit` `$9E00` (poziom i paleta per slot, 1 171 cykli), `StatusRow`
+`$8BEA`, `StatusField` `$8C53`, `BannerUpdate` `$8B84`, `SfxOverdrive` `$896E`, `SfxZap` `$8979`,
+`SoundTick` `$8994`, `AtkGate` `$8A97`, `SoloGate` `$8AB1`, `DiveBoost` `$8ABE`, `BulletAimX` `$8B09`,
+`AimDiver` `$8A2B`. Nowa pamięć: `$0350–$0370` (wypełnienie CHR), `$F5` (dźwięk). Pełna lista: MEMORY_MAP.md.
+
+### R4.9 Audyt pamięci i PPU
+
+Napisałem tracer 6502 (`tools/trace6502.py`) i skrypt audytu (`tests/ram_audit.py`): 8 × 100 000 klatek
+(tytuł, demo, 1P, 2P, game over, ekran końcowy) rejestruje każdy odczyt/zapis RAM i VRAM z adresem
+instrukcji. Wynik dla oryginału → `src/original_ram.txt`, sprawdzany przez build. Wnioski: konflikt
+`$011D/$011E` i `$0126–$0128` (wyżej), wykorzystanie wiersza wyników i ekranu tytułowego, tabele per slot
+nurkujących (luki w nich zostawiłem – późniejsze etapy mogą ich używać), stos (najgłębiej `$0133`, jak
+RC3; oryginał `$013A`; reset przy S < `$30` grozi tylko przy zagnieżdżonym NMI, którego w pomiarach nie
+było). **Błąd w samym audycie**: pierwsza wersja tracera zwracała 0 przy odczycie CHR przez `$2007`, przez
+co kopie danych z CHR wyglądały na puste i `$0156–$01FF` (trzy melodie w RAM) uznałem za wolne; agent
+analizujący dźwięk to wykrył przed jakimkolwiek wydaniem, tracer poprawiłem, audyt powtórzyłem, a test
+`test_tune_ram_intact_in_play` pilnuje tego obszaru. Lista z tracera jest dowodem, nie gwarancją –
+ścieżki, do których przebiegi nie dotarły (późne etapy), mogą używać więcej. Build sprawdza też, że bloki
+nowego kodu się nie nakładają (`PreSplit` urósł i bez tej kontroli nachodził na `ScrollFix`).
+
+### R4.10 Testy (punkt 9)
+
+- **cynes: 82/82 OK** (było 61; +4 testy HUD z commitu poprawki, +17 testów RC4; 7 starszych zaktualizowanych
+  pod zmienione reguły, żaden nie usunięty).
+- **FCEUmm (stable-retro 1.0.1): 4/4 OK** (+1: początki strzałów, kolory, środek lasera, limit sprite'ów).
+- **Tracer: 4/4 OK** (dźwięk aktywacji raz, zap vs zwykły strzał, równoczesny ogień, muzyka i RAM melodii
+  bez zmian).
+- Nie testowane: Mesen 2 (brak), RetroArch, sprzęt. **RC4 nie jest zaakceptowane przed
+  testem manualnym użytkownika na emulatorze.**
+
+### R4.11 Wydajność (punkt 10)
+
+| Scenariusz | Najgorsza klatka (iteracje bezczynności ≈ 10 cykli) |
+|---|---|
+| 1 PILOT, 4 × 2 min | 546 (RC3 596, oryginał 349) |
+| co-op W1, 4 × 2 min | 477 (RC3 494) |
+| obaj w Overdrive (W4 + agresja), ogień, 24 × 3 min | **100** (~1 000 cykli), 0 resetów, 0 klatek opóźnienia |
+| to samo z tarczami, 24 × 3 min | **74** (~740 cykli), 0 resetów, 0 klatek opóźnienia |
+
+Metoda RC3 (poprawiony odczyt `$3A/$3B` z PC przerwania). Agresja daje znacznie gęstsze klatki niż test
+RC3 (7 nurkujących, start grupy okrętu flagowego, 8 laserów, 6–7 pocisków wroga), więc liczby RC3 (116 /
+127 bez agresji) nie są tym samym testem. Pierwsza wersja RC4 miała w takiej klatce tylko 12 iteracji;
+profilowanie najcięższych zapisanych klatek (warianty ROM z wyłączanymi procedurami) i zmiany: strumień
+HUD co 4. klatkę (całość na ekranie w ≤ 8 klatek), kopia wyniku 2 klatki po trafieniu, szybsza pętla
+trafień w nurkujących (23 zamiast 30 cykli), przyspieszenie nurkowania jednym slotem na klatkę, wiersz
+statusu co 4. klatkę – na tych samych 16 klatkach najgorsza z 14 do 54. Podział rastra: `PreSplit` 1 171
+cykli, podział 37 cykli później niż w oryginale (< 1 linia), test sprawdza, że jest między formacją
+a statkiem. OAM: bez dodatkowych sprite'ów.
+
+### R4.12 Commity (od najstarszego)
+
+1. `309bdfc Fix score HUD corruption` – przeniesienie zmiennych z wiersza wyników, kontrola buildu
+   z listą RAM oryginału, tracer i skrypt audytu, poprawiony helper nametable, 4 testy HUD/tytułu.
+2. `d925e73 Add overdrive power-up` – cały kod RC4: W3 za 4000, trwałe W2, Overdrive (30 s, ×2, dźwięki,
+   agresja), kolory i wyśrodkowanie pocisków, strzał po ruchu, okno trafienia lasera, wiersz statusu
+   (`STG`, odliczanie), oszczędności CPU, kontrola nakładania bloków kodu.
+3. `bf500a8 Add RC4 regression tests` – 17 nowych testów cynes, 1 FCEUmm, 4 tracera; aktualizacja 7
+   starszych testów pod zmienione reguły.
+4. `Update RC4 docs` – README, CHANGELOG, TESTING, MEMORY_MAP, REVERSE_ENGINEERING, ten raport, łatka BPS.
+
+Kod RC4 jest w jednym commicie: zmiany w `coop.asm` są od siebie zależne (wspólne zmienne, `PreSplit`,
+`ScoreAdd`, HUD), a stany pośrednie nie byłyby osobno budowane ani testowane. Bez `Co-authored-by`, bez
+merge do `main`, bez remote/push.
+
+### R4.13 Ograniczenia i otwarte kwestie
+
+- Błędu startu pocisków P2 i błędu W2 nie odtworzyłem (R4.3, R4.4) – proszę o potwierdzenie w teście manualnym,
+  a jeśli wystąpią: krótki film lub opis sytuacji (który slot, ruch, etap, czy pilot ginął).
+- Detale fioletowych obcych w nurkowaniu: kilka pikseli żółtych zamiast pomarańczowych (koszt koloru P1).
+- HUD odświeża się w ≤ 8 klatek (zmiana wartości ≤ 12 klatek, ~0,2 s) zamiast 1–2.
+- Pocisk wroga celuje w P1 (oryginał), chyba że tylko P2 ma Overdrive (3 z 4 pocisków w P2) albo P1 jest
+  poza grą.
+- Zapas CPU w najgorszej klatce z agresją: ~740 cykli (z tarczami) – mniej niż w RC3 bez agresji.
+- Zagnieżdżone NMI przy bardzo głębokim stosie zresetowałoby grę (sprawdzenie oryginału w `E212` przed
+  `NmiGuard`); w pomiarach 0 klatek opóźnienia.
+- Mesen 2, RetroArch, manual test setup i sprzęt nie testowane przez autora.
 
 ## R3. RC3
 

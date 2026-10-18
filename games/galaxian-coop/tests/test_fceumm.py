@@ -28,7 +28,17 @@ except ImportError:
 BTN = {'B': 0, 'SELECT': 2, 'START': 3, 'LEFT': 6, 'RIGHT': 7, 'A': 8}
 STATE, SUBSTATE, SHIP_X, P1_DEAD, LIVES1, LIVES2 = 0xFF, 0xFE, 0xE4, 0x4F, 0x42, 0x43
 COOP, P1_OUT, P2_STATE, P2_X = 0x05, 0x06, 0x08, 0x09
-BUL_Y, BUL_X, WLEVEL, SHIELD = 0x16, 0x0E, 0x45, 0x126
+
+
+def _symbols():
+    from asm6502 import Assembler
+    asm = Assembler()
+    build.assemble(asm)
+    return asm.symbols
+
+
+SYM = _symbols()        # addresses of the mod's variables, from coop.asm
+BUL_Y, BUL_X, WLEVEL, SHIELD = SYM['BUL_Y'], SYM['BUL_X'], SYM['WLEVEL'], SYM['SHIELD']
 SHOT_OAM = (0x280, 0x2BC, 0x2C0, 0x2C4, 0x2B0, 0x2B4, 0x2B8, 0x2C8)
 
 
@@ -57,10 +67,14 @@ class Emu:
             self.data.update_ram()
 
     def calm(self):
+        """No enemy bullets, no divers (their sprites hidden too: a stopped
+        diver's sprites would stay on screen and fill scanlines)."""
         for k in range(7):
             self[0x284 + 4 * k] = 0
         for k in range(8):
             self[0x738 + k] = 0
+        for a in range(0x200, 0x280, 4):
+            self[a] = 0xF8
 
     def alive(self, pilot):
         return (self[P1_DEAD] == 0 and not self[P1_OUT]) if pilot == 0 else self[P2_STATE] == 1
@@ -197,6 +211,116 @@ class TestFceumm(unittest.TestCase):
             e[0x284], e[0x287] = 0xC4, (x + 0x7C) & 0xFF
             e.step(frames=6)
             self.assertTrue(e.alive(pilot), 'shield holds')
+
+    def test_shot_origins_every_slot(self):
+        """RC4: ships moving left and right, both pilots firing on W1-W4: every
+        new shot of every slot starts at its ship (x = ship x + $7C, the x the
+        ship is drawn at in that frame), keeps that x in RAM and OAM for its
+        whole flight, and is drawn there (pixels: column x+4, the pilot's
+        colour, symmetric: 1 px bullet, 3 px laser), P1 palette 2, P2 palette 0."""
+        import random
+        e = self.e
+        rnd = random.Random(4)
+        fired = [0] * 8
+        checked = [0] * 8
+        dropped = [0, 0]
+        colours = ({}, {})
+        for level in (0, 1, 2, 3):
+            e[WLEVEL], e[WLEVEL + 1] = level, level
+            e[SYM['W4_SEC']], e[SYM['W4_SEC'] + 1] = (30, 30) if level == 3 else (0, 0)
+            track = {}
+            hold = ['', '']
+            for f in range(900):
+                e.calm()
+                e[LIVES1] = e[LIVES2] = 5
+                if f % 25 == 0:
+                    hold = [rnd.choice(['', 'LEFT', 'RIGHT']), rnd.choice(['', 'LEFT', 'RIGHT'])]
+                b1 = tuple(x for x in (hold[0], 'B' if f % 4 < 2 else '') if x)
+                b2 = tuple(x for x in (hold[1], 'B' if (f + 1) % 4 < 2 else '') if x)
+                before = [e[BUL_Y + k] for k in range(8)]
+                oam = [(e[a], e[a + 1], e[a + 2], e[a + 3]) for a in SHOT_OAM]
+                ys = [e[a] for a in range(0x200, 0x300, 4)]       # the OAM this frame shows
+                e.step(b1, b2)
+                screen = e.em.get_screen()
+                ships = (e[SHIP_X], e[P2_X])
+                for k in range(8):
+                    y, x = e[BUL_Y + k], e[BUL_X + k]
+                    if y and (before[k] == 0 or y > before[k]):          # fired this frame
+                        if e[SUBSTATE] == 8:                # (at a stage end the ships go to their start)
+                            fired[k] += 1
+                            self.assertEqual(x, (ships[k // 4] + 0x7C) & 0xFF,
+                                             f'slot {k} W{level + 1} starts at the ship (frame {f})')
+                        track[k] = x
+                    elif y:
+                        self.assertEqual(x, track.get(k, x), f'slot {k} x changed in flight')
+                    else:
+                        track.pop(k, None)
+                for k, (oy, tile, attr, ox) in enumerate(oam):     # the picture of this frame
+                    if not (0x30 <= oy < 0xC0) or tile not in (0x30, 0x60):
+                        continue
+                    self.assertEqual(attr & 3, 2 if k < 4 else 0, f'slot {k} palette')
+                    py, px = oy + 6 - 8, ox + 4 - 8                  # the core shows 224 x 240 (8 px cropped)
+                    if not 3 <= px < 240 - 3:
+                        continue
+                    line = oy + 6
+                    on_line = sum(1 for y0 in ys if y0 < 0xEF and y0 < line <= y0 + 8)
+                    mid = tuple(int(v) for v in screen[py, px])
+                    if on_line > 8 and mid == (0, 0, 0):
+                        dropped[k // 4] += 1                        # 8-sprites-per-line limit
+                        continue
+                    self.assertNotEqual(mid, (0, 0, 0), f'slot {k} drawn at x+4 ({on_line} sprites on the line)')
+                    if screen[py, px - 3].any() or screen[py, px + 3].any():
+                        continue                                    # over an enemy or a star
+                    lit = [tuple(int(v) for v in screen[py, px + d]) == mid for d in range(-3, 4)]
+                    if sum(lit) != (3 if tile == 0x60 else 1):
+                        continue                                    # another sprite touches it
+                    self.assertEqual(lit, lit[::-1], f'slot {k} W{level + 1} x {ox:02X} frame {f}: centred on x+4')
+                    colours[k // 4][mid] = colours[k // 4].get(mid, 0) + 1
+                    checked[k] += 1
+        self.assertTrue(all(fired), f'every slot fired: {fired}')
+        self.assertTrue(all(c >= 20 for c in checked), f'pictures checked per slot: {checked}')
+        print(f'\n  shots hidden by the sprite limit: P1 {dropped[0]}, P2 {dropped[1]}', file=sys.stderr)
+        self.assertEqual(len(colours[0]), 1, colours[0])
+        self.assertEqual(len(colours[1]), 1, colours[1])
+        self.assertNotEqual(colours[0], colours[1], 'P1 and P2 shots in different colours')
+        (g1,), (o2,) = colours[0], colours[1]               # RC5: P1 green, P2 orange
+        self.assertTrue(g1[1] > g1[0] + 80 and g1[1] > g1[2] + 80, f'P1 green {g1}')
+        self.assertTrue(o2[0] > o2[1] > o2[2] + 40, f'P2 orange {o2}')
+
+    def test_ship_silhouettes(self):
+        """RC5: P1 the original ship, P2 its own (build.P2_PIXELS): both
+        pictures matched pixel mask by pixel mask while the ships move, with
+        P1 and P2 each in exactly 3 colours, and no colour shared between the
+        ships but white."""
+        e = self.e
+        p1 = [[v != 0 for v in r] for r in build.p1_ship(self.rom.read_bytes()[-0x2000:])]
+        p2 = [[c != '.' for c in r] for r in build.P2_PIXELS]
+        self.assertNotEqual(p1, p2)
+        matched = [0, 0]
+        cols = (set(), set())
+        for i in range(200):
+            e.calm()
+            m1 = 'RIGHT' if (i // 50) % 2 == 0 else 'LEFT'
+            oam = [e[0x2A0 + k] for k in range(4)]
+            x1 = e[SHIP_X]
+            e.step((m1,), ('LEFT' if m1 == 'RIGHT' else 'RIGHT',))
+            screen = e.em.get_screen()
+            places = ((209 - 8, 120 + ((x1 + 128) & 0xFF) - 128 - 8), (oam[0] + 1 - 8, oam[3] - 1 - 8))
+            for k, (mask, (top, left)) in enumerate(zip((p1, p2), places)):
+                for dx in (0, -1, 1, -2, 2):
+                    x = left + dx
+                    if x < 0 or x + 16 > screen.shape[1]:
+                        continue
+                    box = screen[top:top + 16, x:x + 16]
+                    lit = box.any(2)
+                    want = np.array(mask)
+                    if (lit[want]).all() and int((lit & ~want).sum()) <= 2:
+                        matched[k] += 1
+                        cols[k].update(tuple(int(v) for v in box[r, c]) for r, c in zip(*np.nonzero(want)))
+                        break
+        self.assertGreaterEqual(min(matched), 190, matched)      # (a ship at a cropped edge may not fit)
+        self.assertEqual([len(c) for c in cols], [3, 3], cols)
+        self.assertEqual(len(cols[0] & cols[1]), 1, 'only white in common')
 
     def test_p1_death_no_ghost_shots(self):
         self.ghost_free_absence(0)

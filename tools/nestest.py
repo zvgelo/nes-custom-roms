@@ -33,3 +33,21 @@ def pads(p1=0, p2=0):
 
 def ram(nes, addr, length=1):
     return bytes(nes[addr + i] for i in range(length))
+
+
+def save_png(path, frame, scale=1):
+    """Write an RGB frame (H x W x 3, uint8; a cynes frame or a crop of one)
+    as a PNG, each pixel enlarged to scale x scale. No image library needed."""
+    import struct
+    import zlib
+    import numpy as np
+    img = np.ascontiguousarray(np.asarray(frame, dtype=np.uint8)[:, :, :3])
+    img = img.repeat(scale, 0).repeat(scale, 1)
+    h, w = img.shape[:2]
+    raw = b''.join(b'\x00' + img[y].tobytes() for y in range(h))
+
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0))
+                           + chunk(b'IDAT', zlib.compress(raw, 9)) + chunk(b'IEND', b''))

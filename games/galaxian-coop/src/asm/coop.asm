@@ -33,10 +33,14 @@ T1          = $21
 TITLE_STEP  = $22       ; extra title rows already queued (0-3)
 ; $23-$24 belong to the original (Famicom microphone check in E580-E59C).
 P1_GRANTED  = $25       ; P1 dead, next ship already taken from LIVES1 (FA83)
-; $011D-$011E: gap after P1's score row; only the reset code (E197) writes it
-; ($10): AIM_TOGGLE only uses its parity, P1_REDRAW is cleared by CoopInit.
-AIM_TOGGLE  = $011D     ; alternates the dive target between the players
-P1_REDRAW   = $011E     ; P1 revived by life sharing: ship tiles still to draw
+; $0347-$037F: $FF filler in the block the reset code copies from CHR
+; ($0300-$067F): after the text pointer table ($0301-$0346), before the
+; first text ($0380); no pointer leads there and nothing reads it (traced
+; runs, MEMORY_MAP.md). Written by the reset copy: set before use.
+; Not $0116-$012F: that is the score row, which E307 copies to the HUD and
+; FB70 writes to the title screen (RC3 had variables there: score glitches).
+AIM_TOGGLE  = $0350     ; alternates the dive target between the players
+P1_REDRAW   = $0351     ; P1 revived by life sharing: ship tiles still to draw
 PAD1_PREV   = $EE       ; pads in the previous frame (E54D)
 PAD2_PREV   = $F0
 SELECT_BIT  = $20
@@ -59,6 +63,7 @@ BOOST_HI    = $7C
 DI          = $D9       ; loop index / temporary
 HIT_DONE    = $F3       ; a bullet already hit something this frame
 SHOT_N      = $F4       ; slots left in the current pilot's pass
+OD_SND      = $F5       ; overdrive jingle: frames left (0 = silent)
 LOGIC_RAN   = $FC       ; $FF when E913 ran this frame (bullets move next NMI)
 ; PreSplit temporaries (it runs before the game logic, whose temporaries
 ; these are): T0 speed fraction, T1 whole pixels, T2 tile, DI attributes,
@@ -72,11 +77,20 @@ DLIST       = $0688     ; $0688-$068E: OAM offsets of the divers that can be hit
 LIFE_STEP   = 7         ; extra life every 7000 points
 ; $067A-$067F: the end of the block the reset code copies from CHR to RAM
 ; ($0300-$067F); the last string ends at $0679 and no code reads these.
-; $0126-$0128: gap between the hi score ($0120-$0125) and P2's score row; only
-; the reset code (E197, FFA8) writes it, the score loops stay inside the rows.
-SHIELD      = $0126     ; $0126-$0127: respawn shield frames left P1, P2
+SHIELD      = $0352     ; $0352-$0353: respawn shield frames left P1, P2
 SHIELD_FRAMES = 240     ; 4 s at 60 Hz (3.99 s at NTSC 60.0988 Hz)
-SCORE_NEW   = $0128     ; frames E2FE still copies the scores (reset: $10)
+SCORE_NEW   = $0354     ; frames E2FE still copies the scores
+W2_OWNED    = $0355     ; $0355-$0356: pilot unlocked W2 this game (1): a death
+                        ; brings it back on W2, not W1
+W4_USED     = $0357     ; $0357-$0358: overdrive already used in this life
+W4_SEC      = $0359     ; $0359-$035A: overdrive seconds left (30..1, 0 = off)
+W4_FRM      = $035B     ; $035B-$035C: frames left in the current second (60..1)
+BUL_LV      = $035D     ; $035D-$0364: weapon level each shot was fired with
+STG_SHOWN   = $0365     ; stage number on HUD row 2 (STATUS_BLANK / _UNKNOWN)
+TMR_SHOWN   = $0366     ; $0366-$0367: overdrive seconds on HUD row 2 (same)
+BY_SHOT     = $0368     ; 1 while a bullet's hit is scored (x2 only for shots)
+DIVE_CELL   = $0369     ; $0369-$036F: overdrive dive boost: 8-px cell of y last boosted
+DIVE_RR     = $0370     ; overdrive dive boost: diver slot of this frame
 LASTK       = $067A     ; $067A-$067B: thousands digit at the last life check
 LAG_COUNT   = $067C     ; NMIs that overlapped the previous one, in a row
 PS_MASK2    = $067D     ; PreSplit: P2 visibility mask
@@ -106,7 +120,7 @@ BULLET_TILE = $30
 EXPL_TILE   = $70       ; enemy explosion frames $70/$74/$78/$7C (2x2 each)
 P2_TILE_TOP = $E1       ; sprite table tiles freed from the title logo
 P2_TILE_BOT = $EA
-P2_ATTR     = $00       ; sprite palette 0: orange tip, blue wings, white core
+P2_ATTR     = $00       ; sprite palette 0: orange nose, blue pods, white core
 SHIP_OAM_Y  = $D0       ; BG ship's top row is scanline 209
 RESPAWN_DELAY = 120     ; frames between P2's explosion and respawn
 P1_SPAWN_X  = $F4       ; co-op start/respawn: P1 12 px left of centre,
@@ -114,6 +128,21 @@ P2_SPAWN_X  = $0C       ; P2 12 px right (ships 13 px wide: no overlap)
 REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 
 ; ================================================================ hooks
+; Sprite palette 2 colour 3: orange $27 -> bright green $2A (palette table
+; loaded once at reset, E16B). All sprite palettes had colour 3 = $27 and
+; every colour slot is used; palette 2 colour 3 only colours 2 pixels of a
+; purple alien while it dives (one in each of two of its 4 diver tiles
+; $44-$5F). It gives P1's shots their own colour: P1 green, P2 orange
+; (RC4: yellow $28, too close to the orange). $2A is lighter than the green
+; aliens ($1A) and unlike the white enemy bullets (tile $37, palette 0 colour 1).
+.patch $E1CF, "27"
+        .byte $2A
+
+; Sound driver frame (FD0E, state 3 only: FCFC returned earlier otherwise):
+; the overdrive jingle steps right after the shot sound's own step.
+.patch $FD17, "20 D4 FE"            ; JSR $FED4
+        jsr SoundTick
+
 ; E913 is the gameplay frame (called in play, respawn and demo states).
 ; First call: P1 bullet vs enemies. CoopPre refreshes P1_BLOCK, runs it, then
 ; runs the same routine for the P2 bullet.
@@ -179,9 +208,10 @@ REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 ; hi score (~350 cycles) in every frame, then streams the buffer into the
 ; VRAM queue (E342). In a game the scores only change in AfterScore (all
 ; points, also the life-sharing bonus), at a new game (CoopInit, then FA3E)
-; and when P2 sets the hi score (CoopHiScore): copy in those frames and the
-; next one only (E2FE copies the hi score before updating it, so a new hi
-; score reaches the buffer one frame later); stream every frame as before.
+; and when P2 sets the hi score (CoopHiScore): copy in the two frames after
+; points (not in the kill frame itself, RC4) and the next one after a new
+; game or P2 hi score (E2FE copies the hi score before updating it, so a new
+; hi score reaches the buffer one frame later); stream every other frame.
 .patch $E2E4, "20 FE E2"                ; JSR $E2FE
         jsr HudScores
 
@@ -212,6 +242,28 @@ REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 ; paths and hit boxes are unchanged, only the tilt updates at 30 Hz.
 .patch $EB9C, "20 5E E6"            ; JSR $E65E
         jsr OrientHalf
+
+; Overdrive aggression (OdActive: any pilot's overdrive running). Three
+; hooks into the original attack logic, all inactive without an overdrive.
+; F415 (every frame): counters of solo attacks step every 4th frame; also on
+; frames where $ED & 15 = 2: 5 steps per 16 frames, +25 % attack attempts.
+; The extra step skips F49C (the flagship timer), so flagship waves keep
+; their period.
+.patch $F45F, "A5 ED 29 03 D0 A7"   ; LDA $ED / AND #3 / BNE F40C (RTS)
+        jmp AtkGate
+        nop
+        nop
+        nop
+; A solo attack is dropped while the flagship attack window ($35) is open;
+; in overdrive it goes ahead (slots 3-6 are the solo divers' own: the
+; maximum number of divers stays the stage's).
+.patch $F48B, "A5 35 D0 0C"         ; LDA $35 / BNE F49B (RTS)
+        jsr SoloGate
+        nop
+; Enemy bullets aim at $E4 (EE23): in co-op at P2 instead when only P2 is in
+; overdrive (3 frames out of 4).
+.patch $EE23, "18 A5 E4"            ; CLC / LDA $E4
+        jsr BulletAimX
 
 ; Dive target (EE4E computes the x a diver heads for from SHIP_X).
 .patch $EE4E, "A6 9E A4 9D"         ; LDX $9E / LDY $9D
@@ -333,13 +385,16 @@ ScrollFixKeep:
         rts                     ; 6
 
 ; ================================================================ PreSplit
-; Constant time: every path through a slot is 84 cycles, so the whole
+; Constant time: every path through a slot is 35 + 84 cycles, so the whole
 ; routine (without the pad read E54D it calls) takes PRESPLIT_CYCLES. Own
 ; page: no branch or indexed read here crosses a page boundary.
-;   per slot 84; per pilot 52 + 4*84 + 39 + 6 = 433;
-;   total 6 (extra JSR) + 33 + (11 + 433) + (12 + 433) + 11 = 939
-PRESPLIT_CYCLES = 939
-PRESPLIT_ITER   = PRESPLIT_CYCLES / 42          ; 22: the split moves 15 cycles later
+;   per slot 119; loop steps 4*7 + 3*5 + 3 = 46;
+;   per pilot 21 + 4*119 + 46 + 6 = 549;
+;   total 6 (extra JSR) + 33 + (11 + 549) + (12 + 549) + 11 = 1171
+; Each shot moves with the speed and look of the level it was fired with
+; (BUL_LV), in the colour of its pilot (PilotAttr).
+PRESPLIT_CYCLES = 1171
+PRESPLIT_ITER   = PRESPLIT_CYCLES / 42          ; 27: the split moves 37 cycles later
 .org $9E00
 PreSplit:
         jsr $E54D               ; read pads (the call this replaces)
@@ -368,22 +423,24 @@ PreSplit:
 ; logic ran in the previous frame (speed AND LOGIC_RAN), e.g. not in pause.
 PrePilot:
         sta CUR_SLOT            ; 3
-        ldx WLEVEL,y            ; 4
-        lda SpeedFrac,x         ; 4
-        and LOGIC_RAN           ; 3
-        sta T0                  ; 3
-        lda SpeedInt,x          ; 4
-        and LOGIC_RAN           ; 3
-        sta T1                  ; 3
-        lda BulTile,x           ; 4
-        sta T2                  ; 3
-        lda BulAttr,x           ; 4
+        lda PilotAttr,y         ; 4
         sta DI                  ; 3
         lda PreSplitBase,y      ; 4
         tax                     ; 2
         lda #4                  ; 2
-        sta CUR_PL              ; 3
+        sta CUR_PL              ; 3   -> 21
 PrePilotLoop:
+        lda BUL_LV,x            ; 4  level the shot was fired with (0-3 even
+        and #3                  ; 2  before the first game: no page crossing)
+        tay                     ; 2
+        lda SpeedFrac,y         ; 4
+        and LOGIC_RAN           ; 3
+        sta T0                  ; 3
+        lda SpeedInt,y          ; 4
+        and LOGIC_RAN           ; 3
+        sta T1                  ; 3
+        lda BulTile,y           ; 4
+        sta T2                  ; 3   -> 35
         ldy BulOamLo,x          ; 4
         lda BUL_Y,x             ; 4
         and CUR_SLOT            ; 3
@@ -450,9 +507,15 @@ PrePilotGone:                   ; left the screen: 48 so far
 PrePilotNext:
         inx                     ; 2
         dec CUR_PL              ; 5
-        bne PrePilotLoop        ; 3 (2 the last time)
+        beq PrePilotDone        ; 2 (3 the last time)
+        jmp PrePilotLoop        ; 3
+PrePilotDone:
         rts                     ; 6
+PreSplitCodeEnd:
 
+; PreSplit's tables, in a page of their own (indexed reads never cross a page)
+.org $9D00
+PreSplitTables:
 PreSplitVis1:   .byte 0, 0, $FF, $FF, 0, 0, 0, 0
 PreSplitVis2:   .byte 0, 0, 0, $FF, 0, 0, 0, 0
 PreSplitCoop:   .byte 0, $FF
@@ -463,7 +526,9 @@ SpeedInt:       .byte 4, 4, 4, 6
 SpeedFrac:      .byte $00, $66, $CC, $66
 MaxShots:       .byte 1, 2, 3, 4
 BulTile:        .byte BULLET_TILE, BULLET_TILE, BULLET_TILE, LASER_TILE
-BulAttr:        .byte 0, 0, 0, 1        ; W4: palette 1 = red + orange core
+; Shots and lasers only use colour 3: P1 sprite palette 2 (colour 3 made
+; green, see $E1CF), P2 palette 0 (colour 3 orange, as the P2 ship's nose).
+PilotAttr:      .byte 2, 0
 BulOamLo:       .byte $80, $BC, $C0, $C4, $B0, $B4, $B8, $C8
 PreSplitEnd:
 
@@ -571,6 +636,7 @@ SetP1Dead:
 CoopPre:
         lda #$FF
         sta LOGIC_RAN
+        jsr W4Tick
         jsr IsCoop
         bne CoopPreCoop
         lda P1_DEAD
@@ -692,8 +758,8 @@ SwapToP1:
 ; turn, with $53 = its owner so the points go to the right pilot.
 BulletHits:
         ldy #0                  ; divers F2EF would test: state not 0/$0B/$0C,
-        ldx #6                  ; slots 6..0 in F2D1's order
-BulletHitsList:
+        ldx #0                  ; slots 0..6 (DiverHits walks the list from its
+BulletHitsList:                 ; end: slot 6 first, F2D1's order)
         lda DIVER_STATE,x
         beq BulletHitsListNext
         cmp #$0B
@@ -708,8 +774,9 @@ BulletHitsList:
         sta DLIST,y             ; OAM offset = slot * 16
         iny
 BulletHitsListNext:
-        dex
-        bpl BulletHitsList
+        inx
+        cpx #7
+        bne BulletHitsList
         sty DCOUNT
         lda $E5
         clc
@@ -736,7 +803,7 @@ BulletHitsEnd:
         jmp $F2CA               ; per-frame timer step that F2B3 also did
 
 ; Collisions for pilot X's bullets (moved and drawn by PreSplit before the
-; logic), then fire.
+; logic). Firing is done later in the frame (CoopMid), after the ships moved.
 PilotShots:
         stx CUR_PL
         txa
@@ -748,7 +815,7 @@ PilotShots:
 PilotShotsLoop:
         lda HIT_DONE            ; one hit per frame
         beq PilotShotsCheck
-        jmp PilotShotsFire
+        rts
 PilotShotsCheck:
         ldx CUR_SLOT
         lda BUL_Y,x
@@ -829,11 +896,10 @@ PilotShotsHit:
 PilotShotsNext:
         inc CUR_SLOT
         dec SHOT_N
-        beq PilotShotsFire
+        beq PilotShotsDone
         jmp PilotShotsLoop
-PilotShotsFire:
-        ldx CUR_PL
-        jmp FireShot
+PilotShotsDone:
+        rts
 
 ; Put bullet CUR_SLOT where the original routines read it ($0280/$0283),
 ; owner in $53, hit flag cleared.
@@ -847,6 +913,8 @@ BulletOwnerSlot:
         cpx #4
         rol a                   ; carry = slot >= 4: 0 for P1, 1 for P2
         sta CUR_PLAYER
+        lda #1                  ; the points of this hit come from a shot
+        sta BY_SHOT
         lda #0
         sta HIT_FLAG
         rts
@@ -865,6 +933,7 @@ BulletHitDoneY:
         sta P1_BUL_X
         lda #0
         sta CUR_PLAYER
+        sta BY_SHOT
         lda HIT_FLAG
         cmp #1
         rts
@@ -874,32 +943,67 @@ FormRow:        .byte 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1
 ; F2D1 for bullet CUR_SLOT, against the listed divers only. Same test as
 ; F2EF: hit when (by+6-ey) < 13 and (bx+2-ex) < 12 (unsigned); then F31E
 ; destroys and scores the diver (one kill per bullet and frame). C=1: hit.
-; At 6.4 px per frame the 13-px window can't be skipped over.
+; A bullet is tested every other frame: at up to 4.8 px per frame (and a
+; diver's 1-2 px down) the 13-px window can't be skipped. A W4 laser moves
+; 12.8 px in two frames: its window is 4 px taller (17), upwards, as the
+; laser sprite is 4 px taller than the bullet; RC2-RC3 used 13 and a laser
+; could pass through a diver. One loop per window (immediate compares,
+; counting down: 23 cycles per diver that isn't hit).
 DiverHits:
         ldx CUR_SLOT
-        lda BUL_Y,x
-        clc
-        adc #6
-        sta T0
         lda BUL_X,x
         clc
         adc #2
         sta T1
-        ldx #0
+        lda BUL_LV,x
+        cmp #3
+        lda BUL_Y,x
+        bcs DiverHitsLaser
+        adc #6                  ; C = 0
+        sta T0
+        ldx DCOUNT
+        beq DiverHitsNone
 DiverHitsLoop:
-        cpx DCOUNT
-        bcs DiverHitsNone
-        ldy DLIST,x
+        ldy DLIST-1,x
         lda T0
         sec
         sbc OAM,y
         cmp #$0D
         bcs DiverHitsNext
+        jsr DiverHitsX          ; returns only when there was no hit
+DiverHitsNext:
+        dex
+        bne DiverHitsLoop
+DiverHitsNone:
+        clc
+        rts
+DiverHitsLaser:
+        adc #9                  ; C = 1: + 10
+        sta T0
+        ldx DCOUNT
+        beq DiverHitsNone
+DiverHitsLoopL:
+        ldy DLIST-1,x
+        lda T0
+        sec
+        sbc OAM,y
+        cmp #$11
+        bcs DiverHitsNextL
+        jsr DiverHitsX
+DiverHitsNextL:
+        dex
+        bne DiverHitsLoopL
+        clc
+        rts
+
+; The diver at OAM offset Y passed the y test: x test, then the kill, which
+; returns from DiverHits itself (C from BulletHitDone). Keeps X on a miss.
+DiverHitsX:
         lda T1
         sec
         sbc OAM+3,y
         cmp #$0C
-        bcs DiverHitsNext
+        bcs DiverHitsXNo
         stx DI
         tya
         lsr a
@@ -908,24 +1012,22 @@ DiverHitsLoop:
         lsr a
         tax                     ; slot
         lda DIVER_STATE,x       ; may have been hit by an earlier bullet
-        beq DiverHitsSkip
+        beq DiverHitsXSkip
         cmp #$0B
-        beq DiverHitsSkip
+        beq DiverHitsXSkip
         cmp #$0C
-        beq DiverHitsSkip
+        beq DiverHitsXSkip
+        pla                     ; leave DiverHits from here
+        pla
         stx $9E
         sty $9D
         jsr BulletOwnerSlot
         ldx $9E
         jsr $F31E
         jmp BulletHitDone
-DiverHitsSkip:
+DiverHitsXSkip:
         ldx DI
-DiverHitsNext:
-        inx
-        bne DiverHitsLoop
-DiverHitsNone:
-        clc
+DiverHitsXNo:
         rts
 
 P1Bullets:                      ; E627 replacement: P1's bullets are done in
@@ -974,7 +1076,13 @@ FireShotFree:
         sta BUL_Y,y             ; first drawn (the original showed it at $C4)
         lda #0
         sta BUL_F,y
-        jsr $FEA8               ; shot sound
+        lda WLEVEL,x            ; the shot keeps this level's speed and look
+        sta BUL_LV,y            ; for its whole flight (W4 may end meanwhile)
+        cmp #3
+        beq FireShotLaser
+        jmp $FEA8               ; shot sound
+FireShotLaser:
+        jmp SfxZap              ; overdrive laser sound
 FireShotDone:
         rts
 
@@ -1066,9 +1174,7 @@ DrawReadyFree:
         sta OAM,y
         lda T2
         sta OAM+1,y
-        cmp #LASER_TILE
-        lda #0
-        rol a
+        lda PilotAttr,x
         sta OAM+2,y
         rts
 
@@ -1085,12 +1191,22 @@ ResetPilots:
         lda #0
         sta W4_TIMER
         sta W4_WHO
+        sta OD_SND
+        sta BY_SHOT
+        lda #STATUS_UNKNOWN     ; status row: drawn again (after the banner
+        sta STG_SHOWN           ; blanked it)
+        sta TMR_SHOWN
+        sta TMR_SHOWN+1
+        lda #0
 ResetPilotsBullets:
         sta BUL_Y,x
+        sta BUL_LV,x
         dex
         bpl ResetPilotsBullets
         ldx #1
 ResetPilotsLoop:
+        lda #0                  ; W2 not unlocked yet
+        sta W2_OWNED,x
         jsr ResetBoost
         lda #LIFE_STEP
         sta NEXT_LIFE_LO,x
@@ -1105,15 +1221,19 @@ ResetPilotsLoop:
         bpl ResetPilotsLoop
         rts
 
-; Weapon back to W1, boost and no-death points to 0 for pilot X (death,
-; revive, new game).
+; Pilot X back to its base weapon (death, revive, new game): W2 once it
+; unlocked W2 in this game, else W1. Boost (W3 progress) and no-death points
+; to 0, overdrive off and usable again in the new life.
 ResetBoost:
-        lda #0
+        lda W2_OWNED,x
         sta WLEVEL,x
+        lda #0
         sta BOOST_LO,x
         sta BOOST_HI,x
         sta NODEATH_LO,x
         sta NODEATH_HI,x
+        sta W4_USED,x
+        sta W4_SEC,x
         rts
 
 ; Pilot X's ship is back: a fire button held now (held through the respawn
@@ -1168,12 +1288,54 @@ ScoreAdd:
         rts
 ScoreAddGo:
         pla
-        jsr $E836               ; original: points -> $57/$58, add to row $53
-; Shared tail of every score (enemies, life-sharing bonus): $57 = hundreds,
-; $58 = tens of the points just added to pilot $53.
+        tax                     ; E836-E83F: points -> $57 hundreds, $58 tens
+        lda $E80F,x
+        sta $57
+        lda $E821,x
+        sta $58
+        jsr ScoreDouble         ; overdrive: x2 for the shooter's kills
+        jsr $E841               ; add $54-$58 to row $53 (once)
+        jsr AfterScore
+        lda #0                  ; $54-$56 are 0 for every other add
+        sta $56
+        rts
+
+; Pilot $53 in overdrive (W4) and the points come from one of its shots
+; (BY_SHOT; not a collision, not the life-sharing bonus): double $56-$58.
+; Points are at most 800, so x2 needs the thousands digit $56 (0 or 1).
+ScoreDouble:
+        lda BY_SHOT
+        beq ScoreDoubleDone
+        ldx CUR_PLAYER
+        lda WLEVEL,x
+        cmp #3
+        bne ScoreDoubleDone
+        lda $58                 ; tens x2, carry into the hundreds
+        asl a
+        cmp #10
+        bcc ScoreDoubleTens     ; C = 0
+        sbc #10                 ; C = 1
+ScoreDoubleTens:
+        sta $58
+        lda $57                 ; hundreds x2 + carry
+        rol a
+        cmp #10
+        bcc ScoreDoubleHund     ; C = 0
+        sbc #10                 ; C = 1
+ScoreDoubleHund:
+        sta $57
+        lda #0
+        rol a
+        sta $56                 ; thousands
+ScoreDoubleDone:
+        rts
+
+; Shared tail of every score (enemies, life-sharing bonus): $56 = thousands
+; (only after x2, else 0), $57 = hundreds, $58 = tens of the points just
+; added to pilot $53.
 AfterScore:
-        lda #2                  ; HudScores: copy the scores this frame and
-        sta SCORE_NEW           ; the next (E2FE shows a new hi score late)
+        lda #3                  ; HudScores: copy the scores in the next two
+        sta SCORE_NEW           ; frames (E2FE shows a new hi score late)
         ldx CUR_PLAYER
         lda $57
         asl a
@@ -1183,7 +1345,12 @@ AfterScore:
         clc
         adc T0
         clc
-        adc $58                 ; points / 10
+        adc $58                 ; points / 10 (at most 99 + 100 = 199)
+        ldy $56
+        beq AfterScoreUnits
+        clc
+        adc #100
+AfterScoreUnits:
         sta T0
         clc
         adc BOOST_LO,x
@@ -1205,7 +1372,8 @@ AfterScoreW4:
         jsr CheckW4
 ; Extra life for every 7000 points: compare the score's thousands with the
 ; next threshold; several thresholds in one score are all given. Skipped
-; while the thousands digit is unchanged (a score adds at most 1000).
+; while the thousands digit is unchanged (a score adds at most 1600, which
+; always changes it).
 ExtraLifeCheck:
         ldy #0
         cpx #0
@@ -1297,27 +1465,32 @@ AwardLifeDone:
         rts
 
 ; Stage cleared (replaces INC $59 / SEC at FC38): at most one weapon level
-; per pilot and stage. W1->W2 needs 2000 boost points, W2->W3 5000; the
-; points then restart. In co-op the first cleared stage gives W2 to every
+; per pilot and stage. W1->W2 needs 2000 boost points, W2->W3 4000 more
+; (counted from 0 when W2 was given: no surplus is carried over); the
+; points then restart. W2 once given stays the base level after a death. In co-op the first cleared stage gives W2 to every
 ; pilot still in the game, once per game. W4 is checked right away (CheckW4).
-; Boosts only for a pilot alive and in play now: one who was hit (exploding or
-; waiting for the next ship, also when the stage ends in the same moment) or
-; who is out gets none, and no free W2 later either. Both pilots are handled
+; Point boosts only for a pilot alive and in play now. The free W2 also goes
+; to a pilot who was hit but has a ship coming (exploding or waiting, with a
+; reserve ship): it starts that ship with W2. A pilot out, or hit on its last
+; ship, gets none, and no free W2 later either. Both pilots are handled
 ; before the one-time flag is set.
 StageCleared:
         inc $59
         jsr CoopSpawnPositions
         ldx #1
 StageClearedLoop:
+        jsr IsCoop
+        beq StageClearedAlive
+        lda STAGE1_DONE
+        bne StageClearedAlive
+        lda WLEVEL,x            ; free W2 for a W1 pilot; W2-W4 pilots go
+        bne StageClearedAlive   ; through the normal points check
+        jsr PilotComing
+        beq StageClearedGrant
+        bne StageClearedNext
+StageClearedAlive:
         jsr PilotAlive
         bne StageClearedNext
-        jsr IsCoop
-        beq StageClearedPoints
-        lda STAGE1_DONE
-        bne StageClearedPoints
-        lda WLEVEL,x            ; free W2 for a W1 pilot; W2-W4 pilots go
-        beq StageClearedGrant   ; through the normal points check
-StageClearedPoints:
         lda WLEVEL,x
         cmp #2
         bcs StageClearedNext    ; W3 -> W4 is by no-death points only
@@ -1331,6 +1504,8 @@ StageClearedPoints:
         bcc StageClearedNext
 StageClearedGrant:
         inc WLEVEL,x
+        lda #1                  ; W2 (or more) reached: W2 is kept from now on
+        sta W2_OWNED,x
         lda #0
         sta BOOST_LO,x
         sta BOOST_HI,x
@@ -1377,10 +1552,38 @@ PilotAliveP2:
         cmp #1
         rts
 
-; W3 -> W4 (red laser) as soon as 8000 points were scored without dying.
+; Z=1 when pilot X is in play, or hit with a reserve ship coming (exploding
+; or waiting). Z=0 when out or hit on its last ship.
+PilotComing:
+        jsr PilotAlive
+        beq PilotComingDone
+        cpx #0
+        bne PilotComingP2
+        lda P1_OUT
+        bne PilotComingDone
+        lda LIVES1
+        jmp PilotComingLives
+PilotComingP2:
+        lda P2_STATE
+        beq PilotComingOut
+        lda LIVES2
+PilotComingLives:
+        beq PilotComingOut
+        lda #0
+PilotComingDone:
+        rts
+PilotComingOut:
+        lda #1
+        rts
+
+; W3 -> W4 (red laser overdrive) as soon as 8000 points were scored
+; without dying, once per life (W4_USED): 30 s of play, then W3 again.
+; X = pilot, kept.
 CheckW4:
         lda WLEVEL,x
         cmp #2
+        bne CheckW4Done
+        lda W4_USED,x
         bne CheckW4Done
         lda NODEATH_HI,x
         cmp #>800
@@ -1392,6 +1595,13 @@ CheckW4:
 CheckW4Grant:
         lda #3
         sta WLEVEL,x
+        lda #1
+        sta W4_USED,x
+        lda #W4_SECONDS
+        sta W4_SEC,x
+        lda #60
+        sta W4_FRM,x
+        jsr SfxOverdrive
         lda W4Bit,x
         ora W4_WHO
         sta W4_WHO
@@ -1401,16 +1611,57 @@ CheckW4Done:
         rts
 W4Bit:          .byte 1, 2
 W4_FRAMES = 120
+W4_SECONDS = 30                 ; 30 x 60 = 1800 logic frames (29.95 s NTSC)
 
-BoostNeedLo:    .byte <200, <500        ; 2000 / 5000 points
-BoostNeedHi:    .byte >200, >500
+; Overdrive countdown, once per game-logic frame of normal play only (FE=8):
+; a pause (no E913), the READY / respawn / stage-change sequences and a
+; pilot who is not in play (a death ends W4: ResetBoost) don't use it up.
+; Seconds and frames-in-second instead of one 16-bit frame count: the HUD
+; shows the seconds without a division.
+W4Tick:
+        lda SUBSTATE
+        cmp #8
+        bne W4TickDone
+        ldx #1
+W4TickLoop:
+        lda W4_SEC,x
+        beq W4TickNext
+        dec W4_FRM,x
+        bne W4TickNext
+        lda #60
+        sta W4_FRM,x
+        dec W4_SEC,x
+        bne W4TickNext
+        lda #2                  ; time up: W3 again (shots already flying keep
+        sta WLEVEL,x            ; the level they were fired with: BUL_LV)
+W4TickNext:
+        dex
+        bpl W4TickLoop
+W4TickDone:
+        rts
+
+BoostNeedLo:    .byte <200, <400        ; 2000 / 4000 points
+BoostNeedHi:    .byte >200, >400
 
 ; ---------------------------------------------------------------- after E9B1
+; Firing happens here, after both ships moved (P1: EEC0, P2: P2Move), so a
+; new shot starts from the ship position that is drawn with it (it was one
+; frame behind, 1-2 px off a moving ship, in RC1-RC3).
 CoopMid:
         jsr $E9B1
+        jsr DiveBoost
+        ldx #0
+        jsr FireShot            ; P1 (also 1P and the demo)
         jsr IsCoop
         beq CoopMidDone
         jsr LifeShare
+        jsr P2Update
+        ldx #1
+        jmp FireShot            ; P2
+CoopMidDone:
+        rts
+
+P2Update:
         lda P2_STATE
         cmp #1
         beq P2Alive
@@ -1418,9 +1669,7 @@ CoopMid:
         beq P2Exploding
         cmp #3
         beq P2Waiting
-P2Bullets:                      ; bullets are moved in PilotShots
-        rts
-CoopMidDone:
+P2Bullets:                      ; bullets are moved in PreSplit
         rts
 
 ; Respawn after RESPAWN_DELAY frames, only during normal play (not while
@@ -1794,6 +2043,65 @@ OrientHalf:
 OrientHalfGo:
         jmp $E65E
 
+; ---------------------------------------------------------------- sound
+; The original driver uses pulse 1 for tunes and the diving siren (rewritten
+; every frame), pulse 2 and noise for the shot, explosions and the formation
+; hum; the triangle is never used. Overdrive sounds:
+; - activation: a rising B-flat arpeggio on the triangle (A#4 D5 F5 A#5 D6
+;   F6 A#6, 4 frames each, the last one longer, ~0.6 s). Nothing else uses
+;   the triangle, so it can't cut music or effects, nor be cut;
+; - each W4 shot: a short laser zap on pulse 2 instead of FEA8's shot
+;   (duty 50 %, fast decay, fast downward sweep: ~1.4 kHz falling, ~14
+;   frames). Hardware envelope and sweep end it, nothing to update per frame;
+;   a new shot restarts it (two pilots in one frame: the same values twice).
+SfxOverdrive:
+        lda STATE               ; the driver only runs in a game (state 3)
+        cmp #3
+        bne SfxOverdriveDone
+        lda #28
+        sta OD_SND
+SfxOverdriveDone:
+        rts
+
+SfxZap:
+        lda STATE
+        cmp #3
+        bne SfxZapDone
+        lda #$82                ; duty 50 %, envelope decay, rate 2
+        sta $4004
+        lda #$92                ; sweep on, period 1, downward, shift 2
+        sta $4005
+        lda #$50                ; timer $050: ~1.4 kHz
+        sta $4006
+        lda #$08                ; length index 1, high timer bits 0; restarts
+        sta $4007               ; the envelope (written last)
+SfxZapDone:
+        rts
+
+SoundTick:
+        jsr $FED4               ; the call this replaces (shot sound step)
+        lda OD_SND
+        beq SoundTickDone
+        and #3                  ; a new note every 4 frames
+        bne SoundTickNext
+        lda OD_SND
+        lsr a
+        lsr a                   ; 7..1
+        tax
+        lda OdLinear-1,x
+        sta $4008
+        lda OdPeriod-1,x
+        sta $400A
+        lda #$08
+        sta $400B
+SoundTickNext:
+        dec OD_SND
+SoundTickDone:
+        rts
+; last note first (OD_SND counts down): A#6 F6 D6 A#5 F5 D5 A#4
+OdPeriod:       .byte $1D, $27, $2F, $3B, $4F, $5E, $77
+OdLinear:       .byte $20, $10, $10, $10, $10, $10, $10
+
 ; ---------------------------------------------------------------- HUD scores
 HudScores:
         lda STATE
@@ -1802,10 +2110,17 @@ HudScores:
         lda SCORE_NEW
         beq HudScoresStream
         dec SCORE_NEW
+        cmp #3                  ; 3: the frame the points were scored in (a
+        bcs HudScoresStream     ; kill: busy): copy in the next two frames
 HudScoresFull:
         jmp $E2FE
-HudScoresStream:
-        jmp $E342               ; E2FE's tail: stream the HUD buffer
+HudScoresStream:                ; E2FE's tail: stream the HUD buffer on every
+        lda $0104               ; 4th frame in a game (RC4, CPU): the one
+        and #3                  ; whose logic had $0104 = 3 mod 4 (E2D7 has
+        bne HudScoresDone       ; counted it up since): no stars, no HUD
+        jmp $E342               ; update; all 22 cell pairs in 8 frames
+HudScoresDone:
+        rts
 
 ; ---------------------------------------------------------------- NMI guard
 NmiGuard:                       ; X = stack pointer after the 3 pushes
@@ -1847,7 +2162,8 @@ NmiReset:
         jmp $E22F
 
 ; ---------------------------------------------------------------- EE4E
-; With both ships alive, consecutive dives alternate between P1 and P2.
+; With both ships alive, consecutive dives alternate between P1 and P2;
+; while only one of them is in overdrive, 3 dives out of 4 go for that one.
 AimDiver:
         jsr IsCoop
         beq AimP1
@@ -1858,6 +2174,20 @@ AimDiver:
         ora P1_OUT
         bne AimP2
         inc AIM_TOGGLE
+        jsr OdTarget
+        beq AimAlternate
+        tax                     ; 1 = P1, 2 = P2 in overdrive
+        lda AIM_TOGGLE
+        and #3
+        beq AimOther
+        cpx #1
+        beq AimP1
+        bne AimP2
+AimOther:
+        cpx #1
+        beq AimP2
+        bne AimP1
+AimAlternate:
         lda AIM_TOGGLE
         and #1
         beq AimP1
@@ -1877,6 +2207,126 @@ AimP1:
         ldy $9D
         jmp $EE52
 
+; ---------------------------------------------------------------- aggression
+; Z=0 while any pilot's overdrive runs (W4_SEC is 0 outside overdrive, after
+; a death and in a new game: no flag to clear). Uses A only.
+OdActive:
+        lda W4_SEC
+        ora W4_SEC+1
+        rts
+
+; A = pilot in overdrive alone: 1 P1, 2 P2; 0 none or both. Uses A only.
+OdTarget:
+        lda W4_SEC+1
+        beq OdTargetP1
+        lda W4_SEC
+        bne OdTargetNone
+        lda #2
+        rts
+OdTargetP1:
+        lda W4_SEC
+        beq OdTargetDone
+        lda #1
+        rts
+OdTargetNone:
+        lda #0
+OdTargetDone:
+        rts
+
+AtkGate:                        ; F45F
+        lda $ED
+        and #3
+        bne AtkGateExtra
+        jmp $F465               ; the normal step: flagship timer and counters
+AtkGateExtra:
+        jsr OdActive
+        beq AtkGateDone
+        lda $ED
+        and #$0F
+        cmp #2
+        bne AtkGateDone
+        jmp $F468               ; the extra step: counters only
+AtkGateDone:
+        rts                     ; as F40C: returns from F415
+
+SoloGate:                       ; F48B
+        lda $35
+        beq SoloGateGo
+        jsr OdActive
+        beq SoloGateBlock
+SoloGateGo:
+        rts                     ; F48F: launch
+SoloGateBlock:
+        pla
+        pla
+        rts                     ; as F49B: returns from F415
+
+; Dives (states 2/7, EB9C: y + 1 per frame) ~14 % faster in overdrive: one
+; diver slot per frame (round robin), after the divers moved: + 1 more once
+; per 8-px cell of its y (DIVE_CELL), never from y = 15 mod 16 (the next
+; value is a fire row, tested after EB9C's step). The ship hit bands (5 and
+; 14 px, P2 5 px) can't be skipped by 2 px a frame; x, the launch arc and
+; the return to the formation (exact frame counts) are unchanged. Nothing
+; to do without an overdrive.
+DiveBoost:
+        jsr OdActive
+        beq DiveBoostDone
+        ldx DIVE_RR
+        dex
+        cpx #7
+        bcc DiveBoostSlot
+        ldx #6
+DiveBoostSlot:
+        stx DIVE_RR
+        lda DIVER_STATE,x
+        cmp #2
+        beq DiveBoostDiver
+        cmp #7
+        bne DiveBoostDone
+DiveBoostDiver:
+        ldy DiverOamY,x
+        lda OAM,y
+        and #$0F
+        cmp #$0F
+        beq DiveBoostDone
+        lda OAM,y
+        lsr a
+        lsr a
+        lsr a
+        cmp DIVE_CELL,x
+        beq DiveBoostDone       ; this cell had its extra pixel
+        lda OAM,y
+        clc
+        adc #1
+        sta OAM,y
+        lsr a
+        lsr a
+        lsr a
+        sta DIVE_CELL,x         ; the cell it is in now: not twice
+DiveBoostDone:
+        rts
+DiverOamY:      .byte $00, $10, $20, $30, $40, $50, $60
+
+BulletAimX:                     ; EE23: A = x to aim at, C = 0; keeps X, Y
+        jsr IsCoop
+        beq BulletAimP1
+        jsr OdTarget
+        cmp #2
+        bne BulletAimP1
+        lda P2_STATE
+        cmp #1
+        bne BulletAimP1
+        lda $ED
+        and #3
+        beq BulletAimP1
+        lda P2_X
+        clc
+        rts
+BulletAimP1:
+        lda SHIP_X
+        clc
+        rts
+
 ; ---------------------------------------------------------------- NMI tail
 CoopPost:
         jsr P1Blink             ; first: right after the ship split
@@ -1890,23 +2340,24 @@ CoopPost:
 CoopPostNoReady:
         jsr TitleBadge
         jsr BannerUpdate
+        lda $0104               ; status row on frames 2 mod 4 (no HUD work)
+        and #3
+        cmp #2
+        bne CoopPostStatusDone
+        jsr StatusRow
+CoopPostStatusDone:
         lda STATE
         cmp #3
         bne CoopPostDone
         lda $0104               ; spread over frames: stars (F038) run on
-        and #3                  ; even frames; HUD on frames 1 mod 4,
-        cmp #3                  ; P2 hi score on 3 mod 4. The HUD data
-        beq CoopPostHi          ; changes rarely and streams in 1-2 frames.
-        cmp #1
-        bne CoopPostDone
-        jsr HudP1Lives          ; same lives display in both modes
+        and #3                  ; even frames; HUD and P2's hi score on
+        cmp #1                  ; frames 1 mod 4, the status row on 2, the
+        bne CoopPostDone        ; HUD stream on 3 (HudScores). The HUD data
+        jsr HudP1Lives          ; changes rarely.
         lda COOP
         beq SoloHud
         jsr P1RedrawShip
-        jmp CoopHud
-CoopPostHi:
-        lda COOP
-        beq CoopPostDone
+        jsr CoopHud
         jmp CoopHiScore
 SoloHud:                        ; 1P: drop E897's reserve-ship icons
         lda #$10                ; (row 3/4 cols 21-23); stage flags stay
@@ -1920,10 +2371,12 @@ CoopPostDone:
         rts
 
 ; ---------------------------------------------------------------- banner
-; Messages on HUD rows 1-2 (cols 3-28), written through the game's 26-byte
-; row writer (E4AA) one row per frame, only while it is idle (pointer back
-; on the blank row $E1F2 for $2003) so game messages are never overwritten,
-; and only when the wanted message changes.
+; Messages on HUD row 1 (cols 3-28), written through the game's 26-byte
+; row writer (E4AA), only while it is idle (pointer back on the blank row
+; $E1F2 for $2003) so game messages are never overwritten, and only when the
+; wanted message changes. Row 2 is the status row (StatusRow); the banner
+; blanks it only at the start of a game (BANNER_CUR unknown), so that what
+; an earlier game left there goes away.
 BANNER_UNKNOWN = $FF
 BannerUpdate:
         lda STATE
@@ -1935,8 +2388,13 @@ BannerUpdateGo:
         jsr BannerWanted
         cmp BANNER_CUR
         beq BannerUpdateWrite
+        ldx BANNER_CUR
         sta BANNER_CUR
-        lda #2
+        lda #1                  ; row 1
+        cpx #BANNER_UNKNOWN
+        bne BannerUpdateRows
+        lda #2                  ; row 2 (blank), then row 1
+BannerUpdateRows:
         sta BANNER_ROW
 BannerUpdateWrite:
         lda BANNER_ROW
@@ -1947,12 +2405,25 @@ BannerUpdateWrite:
         lda $39
         cmp #$E1
         bne BannerUpdateDone
-        ldy BANNER_CUR
         lda #$20
         sta $37
         lda BANNER_ROW
         cmp #2
-        bne BannerUpdateRow2
+        bne BannerUpdateRow1
+        lda #$43                ; row 2, col 3: blank (the original's blank row)
+        sta $36
+        lda #<BLANK_ROW
+        sta $38
+        lda #>BLANK_ROW
+        sta $39
+        lda #STATUS_UNKNOWN     ; status row: everything to be drawn again
+        sta STG_SHOWN
+        sta TMR_SHOWN
+        sta TMR_SHOWN+1
+        dec BANNER_ROW
+        rts
+BannerUpdateRow1:
+        ldy BANNER_CUR
         lda #$23                ; row 1, col 3
         sta $36
         lda BannerRow1Lo,y
@@ -1960,16 +2431,149 @@ BannerUpdateWrite:
         lda BannerRow1Hi,y
         sta $39
         dec BANNER_ROW
-        rts
-BannerUpdateRow2:
-        lda #$43                ; row 2, col 3
-        sta $36
-        lda BannerRow2Lo,y
-        sta $38
-        lda BannerRow2Hi,y
-        sta $39
-        dec BANNER_ROW
 BannerUpdateDone:
+        rts
+
+; ---------------------------------------------------------------- status row
+; HUD row 2 (lines 17-24, never written by the original in play):
+;   cols 2-7   "W4 30s" P1's overdrive seconds left (above P1's "W4")
+;   cols 13-18 "STG 01" stage number, co-op only (1P keeps its stage flags)
+;   cols 22-27 "W4 30s" P2's overdrive seconds left, above P2's "2UP" (cols
+;              28-29 of rows 2-3 have palette 1 for P2's ship icon: blue digits)
+; Each field is queued (VRAM queue, 3 entries of 2 cells) only when the value
+; it shows changes, and only while the row writer is idle and the banner
+; has nothing pending (the banner blanks the row at the start of a game).
+STATUS_UNKNOWN = $FF            ; field state unknown: draw it
+STATUS_BLANK   = $FE            ; field blank
+StatusRow:
+        lda BANNER_ROW
+        bne StatusRowDone
+        lda $38                 ; row writer idle?
+        cmp #$F2
+        bne StatusRowDone
+        lda $39
+        cmp #$E1
+        bne StatusRowDone
+        jsr StageWanted
+        cmp STG_SHOWN
+        beq StatusRowTimers
+        ldx VQ_COUNT
+        cpx #14
+        bcs StatusRowDone
+        sta STG_SHOWN
+        ldy #<($2040 + 13)
+        jsr StatusField
+StatusRowTimers:
+        ldx #0
+        jsr StatusTimer
+        ldx #1
+StatusTimer:                    ; X = pilot
+        lda #STATUS_BLANK
+        ldy STATE
+        cpy #3
+        bne StatusTimerSet
+        ldy W4_SEC,x            ; non-zero only while overdrive runs
+        beq StatusTimerSet
+        tya
+        ora #$80                ; seconds + $80: "W4 nnS"
+StatusTimerSet:
+        cmp TMR_SHOWN,x
+        beq StatusRowDone
+        ldy VQ_COUNT
+        cpy #14
+        bcs StatusRowDone
+        sta TMR_SHOWN,x
+        ldy StatusTimerCol,x
+        jmp StatusField
+StatusRowDone:
+        rts
+StatusTimerCol: .byte <($2040 + 2), <($2040 + 22)
+
+; A = stage number to show (1-99, the game's $59 + 1; $59 goes back to 0
+; after stage 99, FC3B) or STATUS_BLANK.
+StageWanted:
+        lda STATE
+        cmp #3
+        bne StageWantedBlank
+        lda COOP
+        beq StageWantedBlank
+        lda $59
+        clc
+        adc #1
+        rts
+StageWantedBlank:
+        lda #STATUS_BLANK
+        rts
+
+; Queue the 6 cells of a field at $20xx (Y = low address of its first cell):
+; A = STATUS_BLANK: blanks; A < $80: "STG nn"; A >= $80: "W4 nnS", nn = A & $7F.
+StatusField:
+        sty T2
+        cmp #STATUS_BLANK
+        beq StatusFieldBlank
+        tax
+        and #$7F
+        ldy #$FF                ; tens / units (0-99)
+        sec
+StatusFieldTens:
+        iny
+        sbc #10
+        bcs StatusFieldTens
+        adc #10
+        sta DI                  ; units
+        txa
+        bmi StatusFieldTimer
+        lda #$23                ; "ST" "G " tens units
+        sta T0
+        lda #$24
+        sta T1
+        jsr StatusPair
+        lda #$17
+        sta T0
+        lda #$10
+        bne StatusFieldDigits
+StatusFieldTimer:               ; "W4" " " tens units "S"
+        lda #W_TILE
+        sta T0
+        lda #$0C                ; red "4", as the HUD's W4
+        sta T1
+        jsr StatusPair
+        lda #$10
+        sta T0
+        sty T1
+        jsr StatusPair
+        lda DI
+        sta T0
+        lda #SECONDS_TILE
+        sta T1
+        jmp StatusPair
+StatusFieldDigits:
+        sta T1
+        jsr StatusPair
+        sty T0
+        lda DI
+        sta T1
+        jmp StatusPair
+StatusFieldBlank:
+        lda #$10
+        sta T0
+        sta T1
+        jsr StatusPair
+        jsr StatusPair
+; One VRAM queue entry: cells T0, T1 at $20(T2); T2 += 2. Keeps Y.
+StatusPair:
+        ldx VQ_COUNT
+        lda T2
+        sta VQ_ADDR_LO,x
+        lda #$20
+        sta VQ_ADDR_HI,x
+        lda T0
+        sta VQ_LO1,x
+        lda T1
+        sta VQ_LO2,x
+        inc VQ_COUNT
+        inc T2
+        inc T2
         rts
 
 ; A = wanted message: W4 achievement (timed) first, then the revive prompt.
@@ -2024,8 +2628,6 @@ BannerWantedNone:
 BLANK_ROW = $E1F2               ; 26 x $10 in the original ROM
 BannerRow1Lo:   .byte <BLANK_ROW, <BanReviveP1, <BanReviveP2, <BanOutP1, <BanOutP2, <BanShotP1, <BanShotP2, <BanShotBoth, <BanShot
 BannerRow1Hi:   .byte >BLANK_ROW, >BanReviveP1, >BanReviveP2, >BanOutP1, >BanOutP2, >BanShotP1, >BanShotP2, >BanShotBoth, >BanShot
-BannerRow2Lo:   .byte <BLANK_ROW, <BLANK_ROW, <BLANK_ROW, <BLANK_ROW, <BLANK_ROW, <BanLaser, <BanLaser, <BanLaser, <BanLaser
-BannerRow2Hi:   .byte >BLANK_ROW, >BLANK_ROW, >BLANK_ROW, >BLANK_ROW, >BLANK_ROW, >BanLaser, >BanLaser, >BanLaser, >BanLaser
 ; red letters and red digits ($0A "1", $0B "2", $0C "4")
 BanReviveP1:    ; "P2 SELECT TO REVIVE P1"
         .byte $10, $10, $20, $0B, $10, $23, $15, $1C, $15, $13, $24, $10, $24
@@ -2051,9 +2653,6 @@ BanShotBoth:    ; "BOTH PILOTS GREAT SHOT"
 BanShot:        ; "GREAT SHOT"
         .byte $10, $10, $10, $10, $10, $10, $10, $10, $17, $22, $15, $11, $24
         .byte $10, $23, $18, $1F, $24, $10, $10, $10, $10, $10, $10, $10, $10
-BanLaser:       ; "W4 RED LASER"
-        .byte $10, $10, $10, $10, $10, $10, $10, $27, $0C, $10, $22, $15, $14
-        .byte $10, $1C, $11, $23, $15, $22, $10, $10, $10, $10, $10, $10, $10
 
 ; ---------------------------------------------------------------- title badge
 ; "CO-OP" as 5 sprites rising 2 px per letter over the logo's bottom-right
@@ -2116,6 +2715,7 @@ BadgeY:         .byte BADGE_Y, BADGE_Y - 2, BADGE_Y - 4, BADGE_Y - 6, BADGE_Y - 
 LIFE_TOP    = $6E
 LIFE_BOT    = $6F
 X_TILE      = $28       ; letter X
+SECONDS_TILE = $36      ; "s" after the overdrive seconds (CHR, build.py)
 W_TILE      = $27       ; letter W
 VQ_LO2      = $0748     ; VRAM queue (E4EF): second byte, first byte,
 VQ_LO1      = $0758     ; address low, address high; count in $E1 (max 16)

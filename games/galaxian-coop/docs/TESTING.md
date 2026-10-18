@@ -2,7 +2,8 @@
 
 Three kinds of results are kept apart here:
 
-1. **Automatic tests** – run by `tests/test_coop.py` in the cynes emulator (headless).
+1. **Automatic tests** – `tests/test_coop.py` in the cynes emulator (headless), `tests/test_fceumm.py` in
+   the FCEUmm core (stable-retro), `tests/test_trace.py` in the 6502 tracer `tools/trace6502.py` (sound).
 2. **Measurements** – one-off emulator scripts (CPU margin, bullet speeds, W4 stress).
 3. **Manual tests** – Mesen 2, RetroArch, real hardware: **not done by the author of the
    code**; checklists below. A pass in cynes is not a confirmation for RetroArch or any other emulator.
@@ -14,9 +15,23 @@ pip install -r games/galaxian-coop/tests/requirements.txt   # cynes, numpy
 python3 games/galaxian-coop/tests/test_coop.py -v
 ```
 
-Last run: 2026-10-18, RC3, ROM SHA-256 `aa33c6b0…a851e8d`, Linux, Python 3.14, cynes 0.1.2:
-**61/61 OK** (~235 s): 45 RC1 tests, 3 RC2 weapon tests, 8 respawn-shield tests, 5 RC3 tests.
+Last run: 2026-10-18, RC5, ROM SHA-256 `d83b9896…6c0c03`, Linux,
+Python 3.14, cynes 0.1.2: **89/89 OK** (~450 s): 45 RC1 tests, 3 RC2 weapon tests, 8 respawn-shield
+tests, 5 RC3 tests, 21 RC4 tests, 7 RC5 tests (`test_shot_colours` rewritten for RC5, not counted again).
 Without cynes the 7 build tests run and the emulator tests are skipped.
+
+RC5 updated (not removed): `test_shot_colours` (P1 green; all 8 slots, both pilots firing in the same
+frames, after a death and after a Life Sharing revive), `test_palette_only_one_colour_changed` (`$2A`).
+The RC5 visual tests write pictures to `build/screenshots/` (not in git; `tools/nestest.save_png`, no
+image library needed): `ships.png` (both ships side by side, ×8) and `w4_w4.png` (both pilots in
+overdrive in real play, ×3).
+
+RC4 changed rules, so these older tests were updated (not removed): `test_boost_thresholds` (W3 at
+3999/4000 instead of 4999/5000), `test_weapon_levels` and `test_fire_one_shot_per_press` (P1's shots use
+sprite palette 2), `test_w4_red_laser` (row 2 shows the countdown, not "W4 RED LASER"),
+`test_hud_scores_follow_points` (the score copy comes in the 2 frames after a kill), the lives/HUD tests
+(the HUD is refreshed within 12 frames), `test_w4_stress_no_overrun` (overdrive with aggression kept on).
+The test helper `nametable()` read 32 bytes into the second nametable up to RC3; fixed.
 
 Second emulator – FCEUmm core (the one RetroArch uses) through stable-retro 1.0.1:
 
@@ -25,11 +40,27 @@ pip install stable-retro
 python3 games/galaxian-coop/tests/test_fceumm.py -v
 ```
 
-**3/3 OK** on RC3: fire (one shot per press, held FIRE = one shot, pool limits, all shots from the
+**5/5 OK** on RC5 (RC4: 4/4): fire (one shot per press, held FIRE = one shot, pool limits, all shots from the
 ship's X) and P1/P2 parity on W1–W4; P1 and P2 death with W4 shots flying: no shot in RAM or OAM during
-the explosion, READY and wait, back on W1 with a shield that holds. The same file run against the RC2
-code fails all three (ghost sprites of P1 and P2, P2 shots with two different X). This is FCEUmm in
-stable-retro, not RetroArch itself.
+the explosion, READY and wait, back on W1 with a shield that holds; **RC4 `test_shot_origins_every_slot`**:
+both pilots firing on W1–W4 while their ships move left and right, 3600 frames: every slot of both pilots
+fires, every new shot starts at its ship's x (+`$7C`), keeps its x in RAM and OAM for the whole flight,
+and is drawn there (pixels: centre column x+4, 1 px bullet / 3 px laser symmetric about it), P1 in one
+colour and palette 2, P2 in another and palette 0 (RC5: P1 green – G well above R and B –, P2 orange –
+R > G > B); no shot hidden by the 8-sprites-per-line limit. **RC5 `test_ship_silhouettes`**: P1's and
+P2's pixel masks match their expected pictures while the ships move (≥ 190 of 200 frames; a ship at the
+cropped edge may not fit), 3 colours each, only white shared. The RC2 code fails the first three tests. This is FCEUmm in stable-retro (the core shows 224 ×
+240 pixels: 8 cropped on each side), not RetroArch itself.
+
+Tracer (`tools/trace6502.py`: 6502 core, NROM, PPU stub with nametables and palette, logs every RAM,
+VRAM and APU write; not cycle-exact, no picture or sound output) – **4/4 OK**:
+
+| Test | Checks |
+|---|---|
+| `test_overdrive_jingle_once` | the triangle (unused by the original) gets exactly the 7 arpeggio periods right after W4 starts, nothing before, no second jingle during 1200 more frames of kills; no original code writes the triangle |
+| `test_overdrive_shot_sound` | W1/W3 press: FEA8's shot (`$4004–$4007` = `05 84 16 08` + noise); W4 press: the zap (`82 92 50 08`, no noise); one sound per press; both pilots in one frame: the same zap twice, nothing else; no new code writes pulse 1 |
+| `test_tunes_unchanged` | the first 6 s of a 1P game: pulse 1 writes (tunes, siren) identical to the original |
+| `test_tune_ram_intact_in_play` | `$0150–$01FF` (tune data in RAM) unchanged through 3000 frames of co-op with overdrive |
 
 cynes' power-on state is not deterministic; tests that compare two runs load one saved power-on state
 into both machines.
@@ -63,7 +94,7 @@ into both machines.
 | Messages / spawns | `test_revive_prompt`, `test_spawn_positions` | `P2 SELECT TO REVIVE P1`, `P1 OUT`, `P1 SELECT TO REVIVE P2`, cleared after a revive; P1 left/P2 right at start and next stage, 1P centred, revive 24 px beside the donor without moving it |
 | RC2 fire | `test_fire_one_shot_per_press` | W1–W4, both pilots at once: FIRE held 120 frames = 1 shot; quick presses fill exactly 1/2/3/4 slots, the extra press is blocked; a freed slot fires on the next press; W4 shot is the red laser; P1 holding while P2 presses (and the reverse): independent |
 | RC2 death | `test_death_resets_weapon_and_shots` | P1 and P2 dying on W2, W3, W4: W1, boost and no-death points 0, its shots removed, partner's level/points/shots kept; no shots while dead, partner fires on its level; FIRE held through the respawn gives no shot; then 1 shot at a time |
-| RC2 stage 1 | `test_stage_one_boost_only_for_alive_pilots` | both alive: W2/W2 in RAM and in the HUD; P1 or P2 hit just before the clear: no free W2, not given after the respawn; P1 X0: only P2, not given after a revive; P2 X0: only P1 |
+| RC2 stage 1 | `test_stage_one_boost_for_pilots_in_game` (RC4: was `…_only_for_alive_pilots`) | both alive: W2/W2 in RAM and in the HUD; P1 or P2 hit just before the clear with a reserve ship: W2, back with W2 (RAM and HUD); hit on the last ship: none, eliminated; P1 X0: only P2, not given after a revive; P2 X0: only P1 |
 | Shield | `test_shield_p1`, `test_shield_p2` | shield 240 when hit, no countdown while away; one tick per game frame, 240 frames in total from the return; W1 after the respawn; enemy bullets do not hit; lives, weapon level, boost and no-death points kept; moves and fires, held FIRE = one shot; hit again once the shield is over |
 | Shield | `test_shield_blocks_diver_collisions` | real diver collisions (found by play with enemy bullets removed) replayed: deadly without a shield, harmless with it, for P1 and P2 |
 | Shield | `test_shields_independent` | both pilots hit together: both shielded at once with separate counters; P1 dying later keeps P2's shield, protection and weapon |
@@ -73,9 +104,62 @@ into both machines.
 | RC3 ghost shots | `test_p1_death_no_ghost_shots`, `test_p2_death_no_ghost_shots` | real hit by an enemy bullet with 4 W4 shots flying, X2→X1 and X1→X0: shots and their sprites gone at once; through explosion, READY, wait or X0 (partner fighting on W4, both pads mashing FIRE) no shot of the pilot in RAM or OAM and no points; back (respawn or SELECT revive) on W1 with a shield, held FIRE gives nothing, a new press one shot |
 | RC3 parity | `test_weapon_parity` | per level, P1 vs P2 identical: frames to the shot (2), Y in every frame, full flight 50/46/42/32 frames, X never changes, rapid presses fill exactly 1–4 slots with all shots from one X; both W4: 8 shots at most |
 | RC3 | `test_w4_with_shields_stable`, `test_hud_scores_follow_points` | 1 min both on W4 with shields kept on: no reset, no lag frame; P1 and P2 points and a new hi score (P1 or P2) reach the HUD on screen |
-| Stress | `test_w4_stress_no_overrun` (2 min, both on W4, firing), `test_stress_no_crash_or_overrun` (3 min random input) | no game reset, no crash; idle CPU margin > 100 iterations in normal play |
+| Stress | `test_w4_stress_no_overrun` (2 min, both on W4 with overdrive and aggression kept on, firing), `test_stress_no_crash_or_overrun` (3 min random input) | no game reset, no lag frame, no crash; idle CPU margin > 100 iterations in normal play |
+| RC4 score HUD | `test_score_hud_values` | 18 scores (0 … 14000) for P1 with the reverse list for P2: rows 3 and 4 of the nametable equal what RAM requires in every cell (scores, hi score = the best, labels, `Wn`, `Xn`, blanks right of the scores); rendered digits read back from the picture |
+| RC4 score HUD | `test_score_hud_photo_cases` | photos from manual testing after real play (dives): 2130/2810/5000 on W1, 4140/5010 on W2, in pause and after it; P1 out (X0) at 14530, P2 on W4 at 20000 with `P2 SELECT TO REVIVE P1` on screen |
+| RC4 score HUD | `test_score_hud_long_session`, `test_title_score_row_clean` | 3 min both scoring: HUD = RAM at every check, rows 0–1 only blank/banner text, row 2 only the status row; after GAME OVER the title's score row holds digits and blanks only |
+| RC4 weapons | `test_w3_needs_4000_after_w2`, `test_persistent_w2`, `test_life_share_keeps_w2_rule`, `test_stage_one_boost_natural` | 3999/4000 after W2, no surplus (3500 on W1 → 0 after W2), free W2 at 800 then W3 at a 4800 total; death from W2/W3/W4 → W2 if unlocked, W1 if not, progress/no-death/overdrive reset, then 4000 needed again; revive follows the same rule; 5 natural stage-1 clears by a bot: W2 exactly for the pilots in play at the clear, unchanged through the stage change, HUD right |
+| RC4 overdrive | `test_overdrive_lasts_30_seconds`, `test_overdrive_pause_and_stage_change`, `test_overdrive_independent_pilots`, `test_overdrive_shots_finish_their_flight`, `test_new_game_clears_overdrive` | 1800 normal-play frames (`W4 30s` … `W4 01s` on row 2, then blank and W3), once per life even with ≥ 8000 no-death points, again after a death; pause and stage change don't count and don't renew; two independent countdowns, a death ends only that one; lasers in flight keep 6.4 px/frame and the laser tile, new shots W3 (3 slots), slot 4 not reused; a new game clears all of it |
+| RC4 x2 | `test_double_score_in_overdrive`, `test_double_score_extra_life_and_hi_score` | P1 on W4 scores only doubled values, P2 on W1 only base values; both doubled when both on W4; x1 right after W4 ends; life-sharing bonus +200 from a donor on W4; doubled points reach the 7000 extra life and the hi score, HUD right |
+| RC4 aggression | `test_overdrive_aggression` | from one saved moment, 90 s with shields: P2 in overdrive vs none: dive starts +15 % or more (measured +41 %), dive speed +8…20 % (measured +14 %), more dives heading to P2 and more enemy shots aimed at P2; without overdrive two runs are identical (the hooks change nothing) |
+| RC4 shots | `test_shots_centred_on_ships`, `test_raster_split_below_formation` | W1 and W4, every slot, both pilots, edge and middle positions: shot x + 4 = the ship's visible centre (RC5: also P2's new silhouette), picture symmetric about it; the P1 ship split stays between the formation and the ship with 8 lasers flying |
+| RC5 ships | `test_ship_silhouettes`, `test_p2_sprites_and_oam_use`, `test_ship_hitboxes_unchanged` | expected pictures from CHR / `build.P2_PIXELS` and the palettes: P1 and P2 matched pixel by pixel (position and RGB) in 260 frames each while moving, edges included; masks differ (10–60 px), same box (columns 2–14, rows 0–15); P2 = 4 sprites at `$02A0–$02AF` (tiles `$E1`/`$EA`, right half H-flipped, x = P2_X + `$79`, y `$D0`), no other OAM entry uses them, shots only in their 8 OAM slots (all 8 used), 13 stars; an enemy bullet sweeping −12…+12 px hits P1 and P2 from the same 11 offsets |
+| RC5 colours | `test_shot_colours`, `test_laser_shape_and_colours`, `test_enemy_colours_unchanged`, `test_palette_only_one_colour_changed` | P1 green `$2A` (not the aliens' `$1A`, not the white enemy bullets), P2 orange `$27`, OAM palette and pixel of every slot on W1–W4, both pilots firing together and alternately, after a death and after a revive (both directions); every W4 laser drawn alone is exactly the 3 × 8 laser in its pilot's colour; enemy sprites in 3000 frames of real play (divers of all colours, flagships, explosions, enemy bullets): every visible pixel has the original colour except palette 2 colour 3 (`$2A`); palette RAM = original except that byte |
+| RC5 shield / HUD | `test_shield_blink_silhouettes`, `test_hud_in_overdrive` | during the 4-s blink each ship is in every frame either its exact picture or not drawn (no partial or mixed picture), the partner exact; afterwards both exact, P1's nametable rows as before the death; both pilots in overdrive (started by points): HUD cells, digits on the picture and status row `W4 nns` / `STG 01` / `W4 nns`, also while lasers fly through the HUD rows |
+| RC4 HUD | `test_stage_counter` | `STG 01`, `02`, `03` after natural stage changes; a death and life sharing keep it; `STG 99`, then `01` (the game's own wrap); nothing else on row 2; 1P: row 2 blank |
 
 ## 2. Measurements (emulator scripts, not part of the suite)
+
+**RC5 (ROM `d83b9896…`)**: the PRG is RC4's except the palette byte `$E1CF` (data loaded once at reset);
+CHR changes only tiles `$E1`/`$EA`. Tracer, same input on RC4 and RC5, 20 000 frames of co-op (W4 phases
+included): RAM identical in every frame, identical APU writes, identical CPU cycle count (606 780 229).
+Stress in cynes with the RC4 script (`stress_rc4.py`: both pilots on W4 with the overdrive and its
+aggression kept on, 8 shots, x2 scoring, lives kept, firing all the time; corrected counter):
+
+| Scenario | RC4 | RC5 |
+|---|---|---|
+| both on W4, 24 × 3 min | 100 | **96**, 0 resets, 0 lag frames |
+| same with both shields kept on (blinking), 24 × 3 min | 74 | **73**, 0 resets, 0 lag frames |
+
+cynes starts with a random power-on state, so these sessions are not the same games as RC4's. RC4 and
+RC5 were then run in lockstep from one saved state with the same input (`stress_pair.py`, 24 + 24
+sessions × 3 min, same scenario): the idle value is identical in every frame, so is each session's worst
+(no frame differs): no performance change.
+
+**RC4 (ROM `670f347b…`, corrected counter, scripts in the session scratchpad: `stress_rc4.py`,
+`margin2.py`, corpus replays)**:
+
+| Scenario | Worst frame (idle iterations, ~10 cycles each) |
+|---|---|
+| RC4 1 PILOT, 4 × 2 min random input | 546 (RC3 596) |
+| RC4 co-op W1, same | 477 (RC3 494) |
+| RC4 both pilots in overdrive (W4 + aggression kept on), firing, 24 × 3 min | **100** (~1000 cycles), 0 resets, 0 lag frames |
+| same with both shields kept on, 24 × 3 min | **74** (~740 cycles), 0 resets, 0 lag frames |
+| RC4 before the RC4 CPU changes, same scenario, 12 + 12 sessions | 12 / 63 – one frame almost full |
+
+The overdrive aggression makes the W4 scenario much denser than RC3's (7 divers, a flagship group
+starting, 8 lasers, 6–7 enemy shots at once), so the RC3 figures (116 / 127, no aggression) are not the
+same test. The heaviest saved frames were profiled by replaying them on ROM variants with single
+routines stubbed out; the RC4 CPU changes were: HUD buffer streamed every 4th frame (was every frame;
+the whole HUD still reaches the screen within 8 frames, a change within 12), the score copy moved to the
+2 frames after a kill, the diver hit loop rewritten (23 instead of 30 cycles per diver and shot), the
+dive boost doing one diver per frame, the status row on frames 2 mod 4. On the 16 heaviest saved frames
+the worst went from 14 to 54 iterations (same states). Stack: deepest write `$0133` (as RC3; the
+original `$013A`).
+
+**Sprite limit (RC4)**: in natural co-op play (6000 frames each, W1 and W4, FCEUmm and cynes, which both
+drop the 9th sprite on a line) no player shot was ever hidden; with enemies frozen by a test (their
+sprites left on screen) shots were hidden on the formation's lines – a test artefact, now avoided.
 
 **CPU margin (RC1)** – the main loop only counts (`INC $3A`, ~10 cycles per iteration); the smallest count
 between two NMIs is the CPU time left in the worst frame. 4 sessions × 2 min random input each:
@@ -124,7 +208,9 @@ reset; the reset still happens after 8 overlapping NMIs in a row.
 
 **Raster split** – with the shortened wait and `PreSplit`, screen lines 0–120 are pixel-identical to a ROM
 variant with the original wait (co-op, co-op with 8 lasers, 1P; 12 frames each); title identical over 600
-frames. So the P1 ship split happens at the same place.
+frames. So the P1 ship split happens at the same place. RC4: `PreSplit` takes 1171 cycles (27 loop
+iterations removed, the split 37 cycles later than the original, < 1 scanline); the automatic test
+`test_raster_split_below_formation` checks it lands between the formation and the ship.
 
 **Bullet speed** (full flight from the ship to the top, P1, 1P mode):
 
@@ -147,7 +233,40 @@ fire, W2 after a death, free W2 after stage 1) – fixed in RC2. Other RC1 items
 **RC2: not tested outside cynes yet** (no Mesen 2, RetroArch or hardware run). RC2 is
 not accepted until it is tested manually in an emulator.
 
-**RC3: not tested outside the emulators yet** (cynes, FCEUmm in stable-retro). RC3 checklist:
+**RC3 in manual emulator testing (by the user)** – PASS: no ghost shots after P1's death, P1/P2 same shot
+speeds, one shot per press, death resets the weapon and removes shots, shield ~4 s, W4 lasers and
+GREAT SHOT, smooth with both on W4, HUD updates. FAIL: some P2 shots on W2–W4 not starting at the ship;
+W2 after stage 1 not always for both; wrong characters in P1's score (photos) – see CHANGELOG RC4.
+
+**RC4 in manual emulator testing (by the user)** – 11/12 PASS: scores and hi score without glitches, all shot
+positions, free W2 after stage 1, W2 kept after a death, W3 after 4000 more, stage counter, overdrive
+(30 s, countdown, sounds, x2, aggression, back to W3), no slowdown, game over and back to the menu.
+FAIL: P1 yellow / P2 orange shots too easy to confuse; remark: the two ships look too much alike.
+
+**RC5: not tested outside the emulators yet** (cynes, FCEUmm in stable-retro, tracer). RC5 checklist:
+1. P1's shots bright green, P2's orange on W1–W4 (lasers too), in 1 PILOT and co-op; easy to tell apart
+   from each other, from the green aliens and from the white enemy bullets.
+2. P2's ship: delta nose with a white cockpit, flat-topped pods, split tail fins; P1's ship unchanged.
+   Both recognisable at a glance, also side by side and when they overlap.
+3. Respawn shield: both ships blink for ~4 s and come back whole (no missing or stray pixels).
+4. Diving purple aliens: 2 small pixels are green (were orange; RC4 yellow) – note if it is distracting.
+5. Same smoothness as RC4 with both pilots in overdrive.
+
+RC4 checklist:
+1. Score: P1 and P2 scores, hi score, `Xn`, `Wn` contain only correct digits during long play, in pause,
+   with P1 out and the revive message, after a game over on the title screen.
+2. Shots: P1 yellow, P2 orange on W1–W4; every shot (all 4 slots) leaves from the middle of its ship,
+   also while moving and at the screen edges; W4 lasers centred.
+3. Stage 1 cleared with both ships in play: `W2` / `W2`. A pilot exploding or waiting for its ship at that
+   moment (with a ship left) also gets W2 and comes back with it; one hit on its last ship gets none.
+4. W3 needs 4000 points after W2 plus a cleared stage. After a death a pilot who had W2 comes back on W2.
+5. Overdrive: jingle once, `GREAT SHOT`, `W4 30s` countdown above the pilot (P2's above `2UP`), zap sound per
+   shot, doubled points, more and faster attacks aimed at that pilot; after 30 s back to W3, x1, calm
+   enemies; pause stops the countdown; once per life.
+6. `STG 01`, `02` … above the hi score in co-op; nothing on that line in 1 PILOT.
+7. Smooth play with both pilots in overdrive; no stutter, no reset.
+
+RC3 checklist:
 1. Co-op, P2 on W2+ firing while P1 explodes, waits for READY and is out (X0): no shot appears for P1
    anywhere, also not for a single frame where P2's shot hits.
 2. P2 on W2–W4: every shot leaves from P2's ship (before RC3 the 2nd/3rd shot could start far left).
@@ -158,8 +277,8 @@ RC2 checklist (in addition to the lists below):
 1. Hold FIRE on W1–W4: one shot only; press repeatedly: up to 1/2/3/4 shots, no more.
 2. Die on W2+: back on W1, your shots disappear at the moment of death; the partner keeps its level.
 3. Keep FIRE held while your ship comes back: no shot until you press again.
-4. Clear stage 1 in co-op with both ships alive: `W2` / `W2`; with one pilot exploding at that moment: only
-   the other one gets W2.
+4. Clear stage 1 in co-op with both ships alive: `W2` / `W2`; with one pilot exploding at that moment (ship
+   left): both get W2 (RC4).
 5. Respawn shield: the ship blinks for ~4 s (fast in the last second), enemy bullets and divers pass
    through it, it moves and fires; then it can be hit again. Revive by SELECT: only the revived ship
    blinks. 1 PILOT: no blinking.

@@ -17,10 +17,12 @@ implemented and covered by the automatic emulator tests; play tests on real setu
 
 ## Features
 
-- **Simultaneous co-op**: P1 (controller 1) keeps the original ship, P2 (controller 2) flies an
-  orange-blue ship. Both move and shoot independently and can pass through each other.
+- **Simultaneous co-op**: P1 (controller 1) keeps the original ship, P2 (controller 2) flies its own
+  orange-blue ship (RC5: delta nose with a white cockpit, flat-topped pods and split tail fins; same size,
+  same hit boxes). Both move and shoot independently and can pass through each other.
 - **Independent shooting and scoring**: every bullet belongs to its pilot; points go to the owner.
-  Enemy bullets and diving enemies can hit either ship; collisions are checked per ship.
+  Enemy bullets and diving enemies can hit either ship; collisions are checked per ship. **P1's shots are
+  bright green, P2's orange** on every weapon level (also P1 in 1 PILOT).
 - **Lives**: each pilot starts with 3. The HUD shows one ship icon and the number of lives left
   **including the ship in play** (`X3`, `X2`, `X1`, `X0`) – in both modes.
 - **Game Over** only when both pilots are out; a pilot left alone keeps playing. In co-op the ships start
@@ -30,26 +32,36 @@ implemented and covered by the automatic emulator tests; play tests on real setu
   1 life. A message on the top of the screen says who can press SELECT.
 - **Weapon boosts (both modes, per pilot)**:
 
-  | Level | Bullets at once | Bullet speed (px/frame) | How to get it |
+  | Level | Shots at once | Shot speed (px/frame) | How to get it |
   |---|---|---|---|
-  | W1 | 1 | 4.00 (100 %) | start, and after every death |
+  | W1 | 1 | 4.00 (100 %) | start; after a death as long as W2 was never unlocked |
   | W2 | 2 | 4.40 (110 %) | 2000 boost points, then clear a stage; in co-op also free once, for clearing the first stage |
-  | W3 | 3 | 4.80 (120 %) | W2 + 5000 more boost points, then clear a stage |
-  | W4 – Red Laser | 4 | 6.40 (160 %) | W3 + 8000 points scored without dying; immediately, with a "GREAT SHOT" message |
+  | W3 | 3 | 4.80 (120 %) | 4000 more boost points **counted from when W2 was given**, then clear a stage |
+  | W4 – Red Laser Overdrive | 4 | 6.40 (160 %) | on W3, 8000 points scored without dying: at once, for **30 seconds** |
 
-  Measured full flights from the ship to the top: 49 / 45 / 41 / 31 frames. Boost points and no-death
-  points are separate from the score shown in the HUD.
+  Measured full flights from the ship to the top: 50 / 46 / 42 / 32 frames. Boost points and no-death
+  points are separate from the score shown in the HUD. At most one level per cleared stage; the free W2 in
+  co-op goes to every pilot still in the game at the moment the stage is cleared, also one exploding or
+  waiting for its next ship (it comes back with W2); a pilot hit on its last ship or already out gets none. Points above a threshold are not carried over to the next one.
 
-  At most one level per cleared stage; the free W2 in co-op only goes to pilots alive and in play when the
-  stage is cleared. A death (or a revive by SELECT) sets the pilot back to W1, clears their boost and
-  no-death points and removes their shots; the score and the other pilot's weapon are not touched. W4 shots are red
-  lasers; damage is unchanged.
+  **Once W2 is unlocked it is kept**: a death (or a revive by SELECT) brings the pilot back on W2 (W1 if W2
+  was never unlocked), with W3 progress, no-death points and overdrive reset and their shots removed; the
+  score, the extra-life thresholds and the other pilot's weapon are not touched.
+
+  **Red Laser Overdrive (W4)**: a rising jingle, the "GREAT SHOT" message and a countdown `W4 30s` above
+  the pilot's HUD; 4 lasers (green for P1, orange for P2) with their own zap sound; **x2 points** for
+  the pilot's own kills; the enemies get more aggressive (about +25 % attacks, dives ~14 % faster, and
+  dives and enemy shots go for the pilot in overdrive more often). It lasts 30 s of play (pause and the
+  stage change don't count), once per life; then W3 again, x1 points, normal enemies. Lasers already
+  flying finish their flight. Damage is unchanged; the respawn shield still works.
 - **Respawn shield (co-op)**: after every respawn and after a revive by SELECT the ship is invulnerable for
   4 seconds (240 frames) and blinks – slowly for 3 s, fast in the last second. It can move and fire as
   usual; points count normally. The other pilot keeps its own state. Not in 1 PILOT.
 - **Extra life every 7000 points** (7000, 14000, 21000, …) for each pilot, given immediately; the life-sharing
   bonus counts too. Lives are capped at 9 (one HUD digit).
-- **HUD**: `1UP` / `2UP` scores, hi-score (P2 can beat it too), lives `Xn`, weapon level `Wn` per pilot.
+- **HUD**: `1UP` / `2UP` scores, hi-score (P2 can beat it too), lives `Xn`, weapon level `Wn` per pilot;
+  above them (co-op) the stage number `STG 01` and, while it runs, each pilot's overdrive countdown
+  `W4 30s` … `W4 01s` (P1 left, P2 right). Messages use the line above.
 - **Title screen**: `1 PILOT` / `2 PILOTS CO-OP`, an animated `CO-OP` badge on the logo and the credit
   `HACK BY ZVGELO ©2026` below Namco's original credits.
 - **Fixes of original glitches**: the row of white dashes on the top line and the `0` in the top-left corner
@@ -101,8 +113,12 @@ What `src/build.py` does:
 3. builds a 32 KiB PRG: new code in `$8000-$DFFF`, the original program unchanged at `$E000-$FFFF`
    except for small **hooks** (`.patch` blocks in `coop.asm`, e.g. `JSR` into the new code). For each hook
    the build checks that the original bytes are exactly what the source says before replacing them;
-4. adds three CHR tiles (P2 ship, red laser) and moves two blank logo cells to another blank tile;
-5. checks the new RAM variables for overlaps and that the cycle-counted routine stays in one page;
+4. changes CHR: the two P2 ship tiles (P2's own ship, `P2_PIXELS`; checked: symmetric, same box as
+   P1's), the laser tile, an `s` glyph for the countdown, and two blank logo cells moved to another blank
+   tile; one palette byte (sprite palette 2, colour 3: green `$2A`);
+5. checks the new RAM variables for overlaps, against the zero page the original uses and against
+   `src/original_ram.txt` (RAM the original uses at run time, traced); checks that the cycle-counted
+   routine and its tables each stay in one page and that no code blocks overlap;
 6. writes `build/Galaxian_Coop.nes` and `build/Galaxian_Coop.mlb` (Mesen 2 labels:
    new routines and RAM variables; Debugger → File → Import Labels).
 
@@ -156,16 +172,23 @@ The game draws everything inside the visible area; no overscan setting is needed
 
 ## Known limitations
 
-- **Sprite limit**: the NES shows at most 8 sprites per scanline. P2's ship, the extra bullets and diving
-  enemies are sprites; when many of them share a line (e.g. several divers low on the screen next to P2)
-  some may flicker or vanish for a frame.
+- **Sprite limit**: the NES shows at most 8 sprites per scanline. P2's ship, the extra shots and diving
+  enemies are sprites; when many of them share a line some may vanish for a frame (not seen in the
+  automatic natural-play checks, see TESTING.md).
 - **CPU budget**: with both pilots on W4 firing all the time, the game runs close to the NES's per-frame
   limit; to stay inside it, at most one bullet hit is processed per frame (a second hit in the same frame
-  registers one frame later), P2's collision checks alternate between frames, and diving enemies update
-  their tilt at 30 Hz. Details and measurements: [docs/TESTING.md](docs/TESTING.md).
+  registers one frame later), P2's collision checks alternate between frames, diving enemies update
+  their tilt at 30 Hz and the HUD is refreshed over 8 frames. Details and measurements:
+  [docs/TESTING.md](docs/TESTING.md).
+- **Purple aliens' details**: no sprite palette had a free colour for P1's green shots; 2 orange pixels
+  of a diving purple alien are now green (the formation and the other aliens are unchanged).
+- **P1's ship keeps its colours**: it is background drawn with the HUD palette (BG palette 0); a green
+  accent would change the HUD or need another palette for the ship rows (whose colour 2 is blue, not
+  white). The ships are told apart by P2's silhouette and the shot colours.
 - When P1 loses a ship, new attack waves pause until P1 is back (original behaviour); P2's deaths do not
   pause the game. In 1 PILOT there is no invulnerability after a respawn (as in the original).
-- The stage flags of the original HUD are not shown in co-op (no room); 1 PILOT keeps them.
+- The stage flags of the original HUD are not shown in co-op (no room; `STG nn` instead); 1 PILOT keeps
+  them and shows no `STG` counter.
 - Messages are red (the HUD palette has no yellow); `!` is not in the font.
 - Stars: 13 instead of 24 (sprites were needed for P2 and the bullets).
 
@@ -191,9 +214,11 @@ python3 games/galaxian-coop/tests/test_coop.py -v
 pip install -r games/galaxian-coop/tests/requirements.txt   # for the emulator tests (cynes)
 ```
 
-Automatic tests run the game in the cynes emulator and check RAM, OAM and the rendered picture.
-`tests/test_fceumm.py` repeats the fire, weapon-parity and death checks in the FCEUmm core (the one
-RetroArch uses) through `pip install stable-retro`. Results,
+Automatic tests run the game in the cynes emulator and check RAM, OAM, nametables and the rendered
+picture. `tests/test_fceumm.py` repeats the fire, weapon-parity, death and shot-origin/colour checks in the
+FCEUmm core (the one RetroArch uses) through `pip install stable-retro`. `tests/test_trace.py` checks the
+sound (APU writes) in a 6502 tracer (`tools/trace6502.py`), which also makes the RAM audit
+(`tests/ram_audit.py`). Results,
 performance measurements and the manual test lists for Mesen 2, RetroArch are in
 [docs/TESTING.md](docs/TESTING.md).
 

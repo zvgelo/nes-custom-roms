@@ -1,0 +1,44 @@
+# RAM the original Galaxian (Japan) program uses while running: every address
+# read or written by original code ($E000-$FFFF) in 8 traced runs of 100000
+# frames each (title, demo, 1P and 2P games, game over, end screen; tracer
+# tools/trace6502.py, script tests/ram_audit.py --write), without the
+# reset-time clear/copy loops (E032-E03A, E058, E072, E0C6, E0D6, E0FA, E19B,
+# F756). The OAM page is listed whole. Together with ORIGINAL_ZP (static scan)
+# and the stack ($0130-$014D) build.py refuses any new variable here. A
+# missing address is not proof it is free: code paths the runs did not reach
+# (late stages) may use more; see MEMORY_MAP.md.
+
+0023
+0027-0044
+004C
+004E-0051
+0053-0068
+006B-0071
+0073-0079
+007E-00D8
+00DA-00E5
+00E8-00F2
+00F6-00F7
+00FA-00FB
+00FD-00FF
+0101-012F
+013A-02FF
+0301-0346
+0380-047D
+0580-0679
+068F-06EC
+06F0-06F4
+06F8-06FC
+06FF-0704
+0707-070C
+0710-0714
+0718-071C
+0720-0724
+0728-072C
+072F-0734
+0737-0744
+0748-079C
+079F-07CC
+07CF-07E4
+07E7-07FC
+07FF
