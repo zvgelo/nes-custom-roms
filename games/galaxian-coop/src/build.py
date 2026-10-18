@@ -17,7 +17,7 @@ from asm6502 import Assembler, AsmError  # noqa: E402
 
 ORIG_SHA256 = '1188cedf84657769f19daef474d9a20e7c2d16f9c5c5998d5baab59f74f3613e'
 DEFAULT_ROM = GAME / 'private' / 'Galaxian (Japan).nes'
-DEFAULT_OUT = GAME / 'build' / 'Galaxian_Coop_stage2.nes'
+DEFAULT_OUT = GAME / 'build' / 'Galaxian_Coop.nes'
 ASM = GAME / 'src' / 'asm' / 'coop.asm'
 
 PRG_ORIG = 0x2000      # 8 KiB, mapped at $E000-$FFFF
@@ -33,6 +33,19 @@ P2_TILES = (0xE1, 0xEA)                 # top half, bottom half
 SHIP_BG_TILES = (0x62, 0x60, 0x63, 0x61)  # BG table: TL, TR, BL, BR
 # BG colour index -> sprite colour index (sprite palette 0 = $30,$11,$27)
 SHIP_COLOR_MAP = {0: 0, 1: 3, 2: 2, 3: 1}
+# W4 red laser: sprite tile $60 (never shown by the original: no code uses it
+# as a tile, unseen in title/attract/demo/play, outside the CHR ranges the
+# reset code copies to RAM). Drawn with sprite palette 1: 1 = red, 3 = orange.
+LASER_TILE = 0x60
+LASER_ORIG = bytes.fromhex('60000c006a0009003a003000c9000907')
+LASER_PIXELS = ['...3....',
+                '..131...',
+                '..131...',
+                '..131...',
+                '..131...',
+                '..131...',
+                '..131...',
+                '...1....']
 
 
 def tile_pixels(chr_data, table, idx):
@@ -61,6 +74,9 @@ def patch_chr(chr_data):
     for off, old in LOGO_CELLS.items():
         assert chr_data[off] == old, f'CHR ${off:04X}: expected {old:02X}'
         chr_data[off] = 0x10
+    off = LASER_TILE * 16
+    assert chr_data[off:off + 16] == LASER_ORIG, 'sprite tile $60 is not the expected original'
+    chr_data[off:off + 16] = encode_tile([['.123'.index(c) for c in row] for row in LASER_PIXELS])
     top, bot = build_p2_tiles(chr_data)
     for tile, data in zip(P2_TILES, (top, bot)):
         off = tile * 16
@@ -76,7 +92,35 @@ def assemble(asm=None):
 # RAM names exported to the Mesen label file (constants in coop.asm)
 MLB_RAM = ('PAD1', 'PAD2', 'SHIP_X', 'P1_DEAD', 'STATE', 'SUBSTATE', 'CUR_PLAYER', 'LIVES1',
            'LIVES2', 'BONUS1', 'BONUS2', 'COOP', 'P1_OUT', 'P1_BLOCK', 'P2_STATE', 'P2_X',
-           'P2_TIMER', 'P2_FIRE', 'P2_BY', 'P2_BX', 'SAVE_BY', 'SAVE_BX', 'T0', 'T1', 'AIM_TOGGLE')
+           'P2_TIMER', 'FIRE_CNT', 'T2', 'CUR_SLOT', 'CUR_PL', 'T0', 'T1', 'AIM_TOGGLE',
+           'P1_GRANTED', 'TITLE_STEP', 'P1_REDRAW', 'BUL_Y', 'BUL_X', 'BUL_F', 'WLEVEL',
+           'BOOST_LO', 'BOOST_HI', 'NEXT_LIFE_LO', 'NEXT_LIFE_HI', 'STAGE1_DONE', 'NODEATH_LO',
+           'NODEATH_HI', 'DCOUNT', 'BANNER_CUR', 'BANNER_ROW', 'W4_TIMER', 'W4_WHO', 'DI',
+           'DLIST', 'HIT_DONE', 'SHOT_N', 'LOGIC_RAN', 'LASTK', 'LAG_COUNT', 'LAG_TOTAL')
+
+
+# new RAM: name -> size; build fails if two of them overlap
+RAM_SIZES = {'COOP': 1, 'P1_OUT': 1, 'P1_BLOCK': 1, 'P2_STATE': 1, 'P2_X': 1, 'P2_TIMER': 1,
+             'FIRE_CNT': 2, 'T2': 1, 'CUR_SLOT': 1, 'CUR_PL': 1, 'T0': 1, 'T1': 1, 'AIM_TOGGLE': 1,
+             'P1_GRANTED': 1, 'TITLE_STEP': 1, 'P1_REDRAW': 1, 'BUL_Y': 8, 'BUL_X': 8,
+             'STAGE1_DONE': 1, 'WLEVEL': 2, 'NODEATH_LO': 2, 'NODEATH_HI': 2, 'DCOUNT': 1,
+             'BANNER_CUR': 1, 'BANNER_ROW': 1, 'W4_TIMER': 1, 'W4_WHO': 1, 'BOOST_LO': 2,
+             'BOOST_HI': 2, 'DI': 1, 'NEXT_LIFE_LO': 2, 'NEXT_LIFE_HI': 2, 'BUL_F': 8, 'DLIST': 7,
+             'HIT_DONE': 1, 'SHOT_N': 1, 'LOGIC_RAN': 1, 'LASTK': 2, 'LAG_COUNT': 1,
+             'PS_MASK2': 1, 'LAG_TOTAL': 1}
+
+
+def check_ram(asm):
+    used = {}
+    for name, size in RAM_SIZES.items():
+        base = asm.symbols[name]
+        for a in range(base, base + size):
+            if a in used:
+                raise SystemExit(f'RAM overlap at ${a:04X}: {used[a]} and {name}')
+            used[a] = name
+    # PreSplit is cycle-counted: it and its tables must stay in one page
+    if asm.symbols['PreSplit'] >> 8 != (asm.symbols['PreSplitEnd'] - 1) >> 8:
+        raise SystemExit('PreSplit crosses a page boundary')
 
 
 def mesen_labels(asm):
@@ -123,6 +167,7 @@ def build(rom_path, out_path, bps=False):
 
     asm = Assembler()
     segments = assemble(asm)
+    check_ram(asm)
     new_prg = patch_prg(prg, segments)
     new_chr = patch_chr(chr_data)
 
@@ -136,9 +181,10 @@ def build(rom_path, out_path, bps=False):
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(out)
     out_path.with_suffix('.mlb').write_text(mesen_labels(asm))
-    code_end = max(s.org + len(s.data) for s in segments if s.org < 0xE000)
+    new_code = sum(len(s.data) for s in segments if s.org < 0xE000)
+    patched = sum(len(s.data) for s in segments if s.org >= 0xE000)
     print(f'Saved:  {out_path}')
-    print(f'Size:   {len(out)} bytes, new code $8000-${code_end - 1:04X} ({code_end - 0x8000} bytes)')
+    print(f'Size:   {len(out)} bytes; new code {new_code} bytes, {patched} bytes patched in $E000-$FFFF')
     print(f'SHA256: {hashlib.sha256(out).hexdigest()}')
     if bps:
         from bps import create_bps
