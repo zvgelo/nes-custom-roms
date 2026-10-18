@@ -1,17 +1,40 @@
 # nes-custom-roms
 
-Local workspace for NES/Famicom ROM hacks.
+Lokalne repozytorium modyfikacji gier NES/Famicom. Jedna gra = jeden katalog w `games/`
+i jeden branch roboczy `game/<nazwa>`; `main` zawiera tylko ukończone i zweryfikowane gry.
 
-- `games/<game>/` – code, patches, docs and tests for a single game.
-- `tools/` – shared tooling: `asm6502.py` (assembler), `bps.py` (BPS patches),
-  `nestest.py` (headless emulator helpers for tests).
+## Projekty
 
-| Game | Folder | Branch |
-|---|---|---|
-| Galaxian Coop | `games/galaxian-coop/` | `game/galaxian-coop` |
+| Projekt | Katalog | Branch | Stan |
+|---|---|---|---|
+| Super Mario Bros. Two Players Hack (build kit) | `games/super-mario-coop/` | `game/super-mario-coop` | ukończony |
+| Galaxian Coop | `games/galaxian-coop/` | `game/galaxian-coop` | Stage 2, czeka na test w RetroArch (jeszcze nie w `main`) |
 
-ROM images are not stored in this repository. Each game's README says where
-to put your own dump of the original ROM and how to build the modified one.
+Szczegóły każdej gry: jej `README.md` i katalog `docs/`.
 
-Branching: one game = one working branch (`game/<name>`). `main` holds only
-finished, verified work.
+## Struktura gry
+
+```text
+games/<gra>/
+├── README.md     cel, funkcje, bazowy ROM i sumy, build, emulator, stan, ograniczenia, autorzy
+├── src/          kod, asembler, patchery, build.py
+├── patches/      dystrybuowalne łatki (IPS/BPS/xdelta) bez danych oryginału
+├── docs/         CHANGELOG.md, TESTING.md (+ dokumentacja techniczna)
+├── tests/        testy automatyczne
+├── private/      oryginalne ROM-y i prywatne wejścia   (ignorowane przez Git)
+└── build/        wygenerowane ROM-y i pliki wynikowe     (ignorowane przez Git)
+```
+
+`tools/` – narzędzia faktycznie używane przez więcej niż jeden projekt lub ogólne
+(asembler, dekoder xdelta, łatki BPS, pomocnicze funkcje testów).
+
+## Start
+
+1. Python 3.10+ (build nie wymaga dodatkowych pakietów).
+2. Własny zrzut oryginalnego ROM-u skopiuj do `games/<gra>/private/` pod nazwą podaną w README gry.
+3. Build: `python3 games/<gra>/src/build.py` → wynik w `games/<gra>/build/`.
+   Build sprawdza sumy SHA-256, nie zmienia oryginału i zwraca kod błędu przy niepowodzeniu.
+4. Testy: `python3 games/<gra>/tests/<test>.py -v`; testy emulatorowe wymagają pakietów z
+   `games/<gra>/tests/requirements.txt` (bez nich są pomijane).
+
+ROM-y (oryginalne i wygenerowane) nigdy nie trafiają do Git. Repozytorium jest wyłącznie lokalne.
