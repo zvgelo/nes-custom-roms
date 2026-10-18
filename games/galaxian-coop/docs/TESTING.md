@@ -7,7 +7,8 @@
 .venv/bin/python games/galaxian-coop/tests/test_coop.py -v
 ```
 
-Ostatni przebieg (2026-10-18, Linux, Python 3.14, cynes 0.1.2): **15/15 OK**, ~95 s.
+Ostatni przebieg (2026-10-18, po ujednoliceniu struktury; Linux, Python 3.14, cynes 0.1.2): **15/15 OK**, ~98 s.
+ROM po reorganizacji ma ten sam SHA-256 (`eb19e3ef…`), więc mechanika jest niezmieniona.
 
 | Test | Co sprawdza |
 |---|---|
@@ -51,5 +52,14 @@ nie słuchano dźwięku, testy nie oceniają grywalności. **Nie testowano na Me
 6. Obserwuj: miganie sprite'ów przy statku P2 (Debug → Event Viewer / „Remove sprite limit” off),
    poprawność podziału ekranu (dolny pasek ze statkiem P1 przy skrajnych pozycjach), pauza START na padzie 1.
 7. Debugger (opcjonalnie): build zapisuje obok ROM-u `Galaxian_Coop_stage2.mlb` (etykiety nowego kodu i RAM) – w debuggerze Mesen 2: File → Import Labels (format Mesen 2, import nie był testowany). Watch `$05–$12`.
+
+## Do wykonania przez użytkownika (RetroArch)
+
+1. Zbuduj ROM i skopiuj `build/Galaxian_Coop_stage2.nes` do `Emulation/roms/nes/`, odśwież ES-DE.
+2. Rdzeń RetroArch: dowolny NES (FCEUmm, Mesen, Nestopia) – ROM to mapper 0 z nagłówkiem NES 2.0.
+   Sprawdź Quick Menu → Information, który rdzeń jest użyty.
+3. Settings → Input → Port 1 Controls / Port 2 Controls: dwa różne pady.
+4. Wykonaj listę z punktu 5 sekcji Mesen 2 (oba tryby, strzały, punkty, życia, Game Over).
+5. Zanotuj rdzeń i wersję RetroArch oraz ewentualne miganie statku P2 lub zniekształcenia dolnego paska ekranu.
 
 Zgłaszając błąd, podaj: tryb, co robili gracze, zrzut ekranu i ewentualnie save state.

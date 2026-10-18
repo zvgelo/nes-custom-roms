@@ -3,7 +3,7 @@
 
     .venv/bin/python games/galaxian-coop/tests/test_coop.py [-v]
 
-Static tests need only the original ROM (games/galaxian-coop/rom/ or $GALAXIAN_ROM).
+Static tests need only the original ROM (games/galaxian-coop/private/ or $GALAXIAN_ROM).
 Emulator tests need `pip install cynes numpy` and are skipped otherwise.
 They drive the game through cynes and read CPU RAM; they do not replace a
 play test on Mesen / hardware (see docs/TESTING.md).

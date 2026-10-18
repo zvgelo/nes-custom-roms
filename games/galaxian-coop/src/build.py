@@ -13,10 +13,10 @@ from pathlib import Path
 GAME = Path(__file__).resolve().parents[1]
 REPO = GAME.parents[1]
 sys.path.insert(0, str(REPO / 'tools'))
-from asm6502 import Assembler  # noqa: E402
+from asm6502 import Assembler, AsmError  # noqa: E402
 
 ORIG_SHA256 = '1188cedf84657769f19daef474d9a20e7c2d16f9c5c5998d5baab59f74f3613e'
-DEFAULT_ROM = GAME / 'rom' / 'Galaxian (Japan).nes'
+DEFAULT_ROM = GAME / 'private' / 'Galaxian (Japan).nes'
 DEFAULT_OUT = GAME / 'build' / 'Galaxian_Coop_stage2.nes'
 ASM = GAME / 'src' / 'asm' / 'coop.asm'
 
@@ -108,7 +108,13 @@ def patch_prg(orig_prg, segments):
 
 
 def build(rom_path, out_path, bps=False):
-    rom = Path(rom_path).read_bytes()
+    rom_path, out_path = Path(rom_path), Path(out_path)
+    if not rom_path.is_file():
+        raise SystemExit(f'original ROM not found: {rom_path}\n'
+                         f'copy your Galaxian (Japan).nes there (see README)')
+    if out_path.resolve() == rom_path.resolve():
+        raise SystemExit('refusing to overwrite the original ROM')
+    rom = rom_path.read_bytes()
     if hashlib.sha256(rom).hexdigest() != ORIG_SHA256:
         raise SystemExit('input is not Galaxian (Japan) [SHA-256 mismatch]')
     header, prg, chr_data = rom[:16], rom[16:16 + PRG_ORIG], rom[16 + PRG_ORIG:]
@@ -127,7 +133,6 @@ def build(rom_path, out_path, bps=False):
     assert len(out) == 16 + PRG_NEW + CHR_SIZE
     assert out[16 + PRG_NEW - 6:16 + PRG_NEW] == prg[-6:], 'vectors moved'
 
-    out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(out)
     out_path.with_suffix('.mlb').write_text(mesen_labels(asm))
@@ -149,7 +154,10 @@ def main():
     ap.add_argument('-o', '--out', default=DEFAULT_OUT)
     ap.add_argument('--bps', action='store_true', help='also write a BPS patch to patches/')
     a = ap.parse_args()
-    build(a.rom, a.out, a.bps)
+    try:
+        build(a.rom, a.out, a.bps)
+    except AsmError as e:
+        raise SystemExit(f'assembler: {e}')
 
 
 if __name__ == '__main__':

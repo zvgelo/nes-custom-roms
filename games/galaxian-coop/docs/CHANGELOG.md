@@ -1,5 +1,11 @@
 # Changelog – Galaxian Coop
 
+## Struktura – 2026-10-18
+
+- Oryginalny ROM: `rom/` → `private/` (wspólna konwencja repozytorium); wyniki w `build/`.
+- Build: czytelny błąd przy braku pliku / błędzie asemblera, ochrona przed nadpisaniem oryginału.
+- README według wspólnego wzoru. Mechanika bez zmian (ten sam SHA-256 ROM-u).
+
 ## Stage 2 – 2026-10-18
 
 Wynik: `build/Galaxian_Coop_stage2.nes` (SHA-256 `eb19e3ef1519b20da9e3a9c16c9e4cadf1a6b7725d61adfb27d875ad2db88159`),
