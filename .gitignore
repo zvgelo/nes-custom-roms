@@ -1,17 +1,19 @@
 # ROM images: original dumps and generated builds are never committed
 *.nes
+*.NES
 *.fds
 *.unf
 *.zip
 
-# Build output and local ROM folders
+# Per-game local folders: private/ = original ROMs and other private inputs,
+# build/ = generated ROMs and build artefacts
 private/
 build/
-out/
 
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 .venv/
 venv/
 
@@ -19,10 +21,7 @@ venv/
 .idea/
 .mcp.json
 
-# Mesen debugger artifacts
+# Mesen debugger artefacts
 *.mss
 *.mst
 *.cdl
-
-# Legacy import folder (pre-repo working copy)
-/galaxian-nes-dx/
