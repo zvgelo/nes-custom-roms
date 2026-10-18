@@ -40,9 +40,13 @@ implemented and covered by the automatic emulator tests; play tests on real setu
   Measured full flights from the ship to the top: 49 / 45 / 41 / 31 frames. Boost points and no-death
   points are separate from the score shown in the HUD.
 
-  At most one level per cleared stage. A death (or a revive by SELECT) sets the pilot back to W1 and clears
-  their boost and no-death points; the score and the other pilot's weapon are not touched. W4 shots are red
+  At most one level per cleared stage; the free W2 in co-op only goes to pilots alive and in play when the
+  stage is cleared. A death (or a revive by SELECT) sets the pilot back to W1, clears their boost and
+  no-death points and removes their shots; the score and the other pilot's weapon are not touched. W4 shots are red
   lasers; damage is unchanged.
+- **Respawn shield (co-op)**: after every respawn and after a revive by SELECT the ship is invulnerable for
+  4 seconds (240 frames) and blinks – slowly for 3 s, fast in the last second. It can move and fire as
+  usual; points count normally. The other pilot keeps its own state. Not in 1 PILOT.
 - **Extra life every 7000 points** (7000, 14000, 21000, …) for each pilot, given immediately; the life-sharing
   bonus counts too. Lives are capped at 9 (one HUD digit).
 - **HUD**: `1UP` / `2UP` scores, hi-score (P2 can beat it too), lives `Xn`, weapon level `Wn` per pilot.
@@ -116,8 +120,9 @@ of the result; any error stops with exit code 1 and nothing is overwritten.
 | Pause | START | – |
 | Title: choose mode / start | SELECT / START | – |
 
-Fire works as in the original: each press fires one shot (holding the button does not repeat), as long as
-the pilot has a free shot (1–4 depending on the weapon level).
+Each new press of FIRE fires one shot, as long as the pilot has a free shot (1–4 depending on the weapon
+level); holding the button never fires again, and a press while all shots are flying does nothing. A button
+held while the ship comes back must be released first.
 
 **SELECT (life sharing)** works only in a co-op game, during normal play (not in pause, not between
 stages), on a new press of the button. The pilot who presses it must be in play with at least `X2`, and the
@@ -159,7 +164,7 @@ The game draws everything inside the visible area; no overscan setting is needed
   registers one frame later), P2's collision checks alternate between frames, and diving enemies update
   their tilt at 30 Hz. Details and measurements: [docs/TESTING.md](docs/TESTING.md).
 - When P1 loses a ship, new attack waves pause until P1 is back (original behaviour); P2's deaths do not
-  pause the game. There is no invulnerability after a respawn (the original has none).
+  pause the game. In 1 PILOT there is no invulnerability after a respawn (as in the original).
 - The stage flags of the original HUD are not shown in co-op (no room); 1 PILOT keeps them.
 - Messages are red (the HUD palette has no yellow); `!` is not in the font.
 - Stars: 13 instead of 24 (sprites were needed for P2 and the bullets).
@@ -186,7 +191,9 @@ python3 games/galaxian-coop/tests/test_coop.py -v
 pip install -r games/galaxian-coop/tests/requirements.txt   # for the emulator tests (cynes)
 ```
 
-Automatic tests run the game in the cynes emulator and check RAM, OAM and the rendered picture. Results,
+Automatic tests run the game in the cynes emulator and check RAM, OAM and the rendered picture.
+`tests/test_fceumm.py` repeats the fire, weapon-parity and death checks in the FCEUmm core (the one
+RetroArch uses) through `pip install stable-retro`. Results,
 performance measurements and the manual test lists for Mesen 2, RetroArch are in
 [docs/TESTING.md](docs/TESTING.md).
 

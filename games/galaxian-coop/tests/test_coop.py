@@ -65,6 +65,27 @@ def lives_hud(frame, g):
     return p1[2], p2[2]
 
 
+def idle_counter(nes):
+    """Main-loop counter $3A/$3B (idle CPU time). An NMI between INC $3A (wrap
+    to 0) and INC $3B leaves the high byte one behind: then add 256. The
+    interrupted PC: cynes state bytes 6-7 (PC), or the NMI's return address on
+    the stack ($014C/$014D, S = $4A) when the step ended on the NMI entry."""
+    state = bytes(nes.save())
+    pc = state[6] | state[7] << 8
+    if pc == 0xE20C:
+        pc = nes[0x14C] | nes[0x14D] << 8
+    value = nes[0x3A] | nes[0x3B] << 8
+    if nes[0x3A] == 0 and pc in (0xE18D, 0xE192):
+        value = (value + 256) & 0xFFFF
+    return value
+
+
+def nametable(nes, which=0):
+    """Nametable bytes from a cynes save state (nametable RAM at offset 10242)."""
+    state = bytes(nes.save())
+    return state[10242 + 1024 * which:10242 + 1024 * (which + 1)]
+
+
 def wait_hud(n, g, frames=10):
     for _ in range(frames):
         hud = lives_hud(n.step(), g)
@@ -86,7 +107,7 @@ def expected_lives(n):
     """Total ships left (in play + reserve), from RAM, as the HUD defines it."""
     if n[P1_OUT]:
         p1 = 0
-    elif n[P1_DEAD] == 0 or n[0x13]:      # alive, or next ship already granted (P1_GRANTED)
+    elif n[P1_DEAD] == 0 or n[0x25]:      # alive, or next ship already granted (P1_GRANTED)
         p1 = n[LIVES1] + 1
     else:
         p1 = n[LIVES1]
@@ -929,12 +950,618 @@ class TestEmulator(unittest.TestCase):
         self.assertEqual(r[P2_X], p2x, 'donor not moved')
         self.assertEqual(abs(((r[SHIP_X] - p2x + 128) & 0xFF) - 128), 24)
 
+    # ------------------------------------------------------------ RC2: fire, death, stage 1
+    SHIELD0 = 0x126
+
+    @staticmethod
+    def calm(n):
+        """No enemy bullets and no divers: only what the test sets up can hit."""
+        for k in range(7):
+            n[0x284 + 4 * k] = 0
+        for k in range(8):
+            n[0x738 + k] = 0
+
+    def coop_at_edges(self):
+        """Co-op game, P1 far left and P2 far right (outside the formation)."""
+        n = self.start(self.rom, two=True)
+        for _ in range(130):
+            self.calm(n)
+            n.controller = pads(LEFT, RIGHT)
+            n.step()
+        n.controller = 0
+        n[LIVES1] = n[LIVES2] = 5
+        self.run_pads(n, [0] * 60)                       # let every shot land
+        return n
+
+    def run_pads(self, n, seq1, seq2=None):
+        """Feed buttons frame by frame (calm screen); frames with a new shot per pilot."""
+        seq2 = seq2 if seq2 is not None else [0] * len(seq1)
+        new = ([], [])
+        prev = [n[self.BUL_Y0 + k] for k in range(8)]
+        for i, (b1, b2) in enumerate(zip(seq1, seq2)):
+            self.calm(n)
+            n.controller = pads(b1, b2)
+            n.step()
+            cur = [n[self.BUL_Y0 + k] for k in range(8)]
+            for k in range(8):
+                if cur[k] > prev[k]:                     # shots only move up
+                    new[k // 4].append(i)
+            prev = cur
+        n.controller = 0
+        return new
+
+    @staticmethod
+    def presses(times, on=2, off=2):
+        return ([B] * on + [0] * off) * times
+
+    def flying(self, n, pilot):
+        return sum(1 for k in range(4) if n[self.BUL_Y0 + 4 * pilot + k])
+
+    def alive(self, n, pilot):
+        if pilot == 0:
+            return n[P1_DEAD] == 0 and not n[P1_OUT]
+        return n[P2_STATE] == 1
+
+    def kill(self, n, pilot):
+        """An enemy bullet just above the pilot's ship."""
+        x = n[SHIP_X] if pilot == 0 else n[P2_X]
+        n[0x284], n[0x287] = 0xC4, (x + 0x7A + 2) & 0xFF
+        for _ in range(12):
+            n.step()
+            if not self.alive(n, pilot):
+                return
+        self.fail(f'P{pilot + 1} not hit')
+
+    def survives(self, n, pilot, shots=5):
+        """True when enemy bullets fired at the pilot do not hit it."""
+        for _ in range(shots):
+            x = n[SHIP_X] if pilot == 0 else n[P2_X]
+            n[0x284], n[0x287] = 0xC4, (x + 0x7A + 2) & 0xFF
+            for _ in range(6):
+                n.step()
+                if not self.alive(n, pilot):
+                    return False
+        return True
+
+    def wait_back(self, n, pilot, b1=0, b2=0, frames=900):
+        """Until the pilot's ship is in normal play again; returns new shots meanwhile."""
+        new = ([], [])
+        for i in range(frames):
+            if self.alive(n, pilot) and n[SUBSTATE] == 8:
+                return new
+            got = self.run_pads(n, [b1], [b2])
+            new[0].extend(got[0]); new[1].extend(got[1])
+        self.fail(f'P{pilot + 1} did not come back')
+
+    def test_fire_one_shot_per_press(self):
+        n = self.coop_at_edges()
+        state = n.save()
+        for level in range(4):
+            shots = level + 1
+            n.load(state)
+            n[self.WLEVEL0], n[self.WLEVEL0 + 1] = level, level
+            got = self.run_pads(n, [B] * 120, [B] * 120)
+            self.assertEqual([len(g) for g in got], [1, 1], f'W{shots}: FIRE held 120 frames = 1 shot')
+            n.load(state)
+            n[self.WLEVEL0], n[self.WLEVEL0 + 1] = level, level
+            got = self.run_pads(n, self.presses(shots + 1), self.presses(shots + 1))
+            self.assertEqual([len(g) for g in got], [shots, shots], f'W{shots}: one shot per press, full pool blocks')
+            self.assertEqual((self.flying(n, 0), self.flying(n, 1)), (shots, shots))
+            for _ in range(80):                          # a shot reaches the top
+                if self.flying(n, 0) < shots and self.flying(n, 1) < shots:
+                    break
+                self.run_pads(n, [0])
+            got = self.run_pads(n, self.presses(1), self.presses(1))
+            self.assertEqual([len(g) for g in got], [1, 1], f'W{shots}: a free slot fires on a new press')
+            if level == 3:                               # W4: one press = one red laser
+                self.assertEqual((n[0x281], n[0x282]), (0x60, 1))
+        n.load(state)                                    # independent buttons
+        n[self.WLEVEL0], n[self.WLEVEL0 + 1] = 3, 3
+        got = self.run_pads(n, [B] * 40, self.presses(4))
+        self.assertEqual([len(g) for g in got], [1, 4])
+        n.load(state)
+        n[self.WLEVEL0], n[self.WLEVEL0 + 1] = 3, 3
+        got = self.run_pads(n, self.presses(4), [B] * 40)
+        self.assertEqual([len(g) for g in got], [4, 1])
+
+    def test_death_resets_weapon_and_shots(self):
+        n = self.coop_at_edges()
+        state = n.save()
+        for pilot in (0, 1):
+            other = 1 - pilot
+            for level in (1, 2, 3):
+                n.load(state)
+                for p in (0, 1):
+                    n[self.WLEVEL0 + p], n[self.BOOST_LO0 + p], n[self.NODEATH_LO0 + p] = level, 150, 200
+                self.run_pads(n, self.presses(level + 1), self.presses(level + 1))
+                self.assertEqual(self.flying(n, pilot), level + 1)
+                self.kill(n, pilot)
+                tag = f'P{pilot + 1} dies on W{level + 1}'
+                self.assertEqual((n[self.WLEVEL0 + pilot], n[self.BOOST_LO0 + pilot], n[self.BOOST_HI0 + pilot],
+                                  n[self.NODEATH_LO0 + pilot], n[self.NODEATH_HI0 + pilot]), (0, 0, 0, 0, 0), tag)
+                self.assertEqual(self.flying(n, pilot), 0, tag + ': its shots removed')
+                self.assertEqual((n[self.WLEVEL0 + other], n[self.BOOST_LO0 + other]), (level, 150), tag + ': partner kept')
+                self.assertGreater(self.flying(n, other), 0, tag + ": partner's shots fly on")
+                self.run_pads(n, [0] * 50)
+                seq = self.presses(3)
+                got = self.run_pads(n, seq, seq)
+                self.assertEqual(len(got[pilot]), 0, tag + ': no shots while dead')
+                self.assertEqual(len(got[other]), min(3, level + 1), tag + ': partner fires on its level')
+                held = (B, 0) if pilot == 0 else (0, B)  # FIRE held through the respawn
+                got = self.wait_back(n, pilot, *held)
+                got2 = self.run_pads(n, [held[0]] * 30, [held[1]] * 30)
+                self.assertEqual(len(got[pilot]) + len(got2[pilot]), 0, tag + ': no shot from a held button')
+                seq = self.presses(3)
+                got = self.run_pads(n, seq if pilot == 0 else [0] * 12, seq if pilot == 1 else [0] * 12)
+                self.assertEqual(len(got[pilot]), 1, tag + ': back on W1, one shot at a time')
+                self.assertEqual(n[self.WLEVEL0 + pilot], 0)
+
+    def w_digits(self, n, g, frames=24):
+        """Weapon digits shown in the HUD (P1, P2)."""
+        names = {1: 1, 2: 2, 3: 3, 0x0C: 4}
+        for _ in range(frames):
+            f = n.step()
+            cells = read_tile(f, g, 3, 3), read_tile(f, g, 30, 3)
+            if all(c in names for c in cells):
+                return tuple(names[c] for c in cells)
+        return None
+
+    def test_stage_one_boost_only_for_alive_pilots(self):
+        g = glyphs(Path(self.rom).read_bytes(), tiles=[1, 2, 3, 0x0C])
+        n = self.start(self.rom, two=True)               # both in play: both W2, HUD too
+        n.step(3)
+        self.clear_stage(n)
+        self.assertEqual((n[self.WLEVEL0], n[self.WLEVEL0 + 1]), (1, 1))
+        for _ in range(300):
+            n.step()
+            if n[SUBSTATE] == 8:
+                break
+        self.assertEqual(self.w_digits(n, g), (2, 2), 'HUD W2 / W2')
+        for pilot in (0, 1):                             # hit just before the clear: no free W2
+            n = self.coop_at_edges()
+            self.kill(n, pilot)
+            self.clear_stage(n)
+            want = [1, 1]
+            want[pilot] = 0
+            self.assertEqual([n[self.WLEVEL0], n[self.WLEVEL0 + 1]], want, f'P{pilot + 1} hit at the clear')
+            self.wait_back(n, pilot)
+            self.assertEqual(n[self.WLEVEL0 + pilot], 0, 'not given later')
+        n = self.p1_out_p2_playing(p2_reserve=2)         # P1 X0: only P2
+        self.clear_stage(n)
+        self.assertEqual((n[self.WLEVEL0], n[self.WLEVEL0 + 1]), (0, 1))
+        for _ in range(300):
+            n.step()
+            if n[SUBSTATE] == 8:
+                break
+        self.press_select(n, p2=True)                    # revived later: still W1
+        self.assertFalse(n[P1_OUT])
+        self.assertEqual((n[self.WLEVEL0], n[self.WLEVEL0 + 1]), (0, 1))
+        n = self.p2_out_p1_playing(p1_reserve=2)         # P2 X0: only P1
+        self.clear_stage(n)
+        self.assertEqual((n[self.WLEVEL0], n[self.WLEVEL0 + 1]), (1, 0))
+
+    # ------------------------------------------------------------ respawn shield
+    def ship_shown(self, n, frame, pilot):
+        if pilot == 1:
+            return n[P2_OAM] < 0xEF
+        x = (120 + ((n[SHIP_X] + 128) & 0xFF) - 128) & 0xFF
+        return int(frame[209:225, max(0, x - 4):x + 20].any(2).sum()) > 30
+
+    @staticmethod
+    def blink_hidden(shield):
+        if shield == 0:
+            return False
+        return ((shield - 1) & 8) == 0 if shield > 60 else ((shield - 1) & 4) == 0
+
+    def respawned(self, pilot):
+        n = self.coop_at_edges()
+        self.kill(n, pilot)
+        self.assertEqual(n[self.SHIELD0 + pilot], 240, 'set when hit, waits for the ship')
+        for _ in range(60):
+            self.run_pads(n, [0])
+            self.assertEqual(n[self.SHIELD0 + pilot], 240, 'no countdown while the ship is away')
+            if self.alive(n, pilot):
+                break
+        self.wait_back(n, pilot)
+        return n
+
+    def check_shield(self, pilot):
+        other = 1 - pilot
+        n = self.respawned(pilot)
+        state = n.save()
+        self.assertEqual(n[self.WLEVEL0 + pilot], 0, 'W1 after the respawn')
+        self.assertEqual(n[self.SHIELD0 + other], 0)
+        start = n[self.SHIELD0 + pilot]                  # 240 game frames from the return
+        self.assertIn(start, (239, 240))
+        frames = 0
+        while n[self.SHIELD0 + pilot]:
+            before = n[self.SHIELD0 + pilot]
+            self.run_pads(n, [0])
+            self.assertEqual(n[self.SHIELD0 + pilot], before - 1, 'one tick per frame')
+            frames += 1
+        self.assertEqual(frames + (240 - start), 240)
+        n.load(state)
+        lives = n[LIVES1 + pilot]
+        n[self.WLEVEL0 + pilot], n[self.BOOST_LO0 + pilot], n[self.NODEATH_LO0 + pilot] = 1, 77, 88
+        self.assertTrue(self.survives(n, pilot), 'enemy bullets do not hit')
+        self.assertEqual((n[LIVES1 + pilot], n[self.WLEVEL0 + pilot], n[self.BOOST_LO0 + pilot]), (lives, 1, 77))
+        self.assertGreaterEqual(n[self.NODEATH_LO0 + pilot], 88, 'boost progress kept')
+        x = n[SHIP_X] if pilot == 0 else n[P2_X]
+        move = RIGHT if pilot == 0 else LEFT
+        self.run_pads(n, *(([move] * 20, [0] * 20) if pilot == 0 else ([0] * 20, [move] * 20)))
+        x2 = n[SHIP_X] if pilot == 0 else n[P2_X]
+        self.assertEqual(abs(((x2 - x + 128) & 0xFF) - 128), 20, 'moves')
+        held = [B] * 60
+        got = self.run_pads(n, held if pilot == 0 else [0] * 60, held if pilot == 1 else [0] * 60)
+        self.assertEqual(len(got[pilot]), 1, 'fires; held FIRE = one shot')
+        self.assertGreater(n[self.SHIELD0 + pilot], 0)
+        for _ in range(240):
+            if n[self.SHIELD0 + pilot] == 0:
+                break
+            self.run_pads(n, [0])
+        self.assertEqual(n[self.SHIELD0 + pilot], 0)
+        self.kill(n, pilot)                              # shield over: hit again
+
+    def test_shield_p1(self):
+        self.check_shield(0)
+
+    def test_shield_p2(self):
+        self.check_shield(1)
+
+    def test_shield_blocks_diver_collisions(self):
+        """Natural diver collisions (enemy bullets removed) replayed with a shield."""
+        import random
+        found = {}
+        rnd = random.Random(1)
+        n = self.start(self.rom, two=True)
+        hist, c = [], 0
+        for i in range(60 * 60 * 6):
+            for k in range(7):
+                n[0x284 + 4 * k] = 0
+            n[LIVES1] = n[LIVES2] = 5
+            if i % 10 == 0:
+                c = pads(rnd.choice([0, LEFT, RIGHT]), rnd.choice([0, LEFT, RIGHT]))
+            n.controller = c
+            hist = (hist + [(n.save(), c)])[-12:]
+            was = [self.alive(n, 0), self.alive(n, 1)]
+            n.step()
+            for pilot in (0, 1):
+                if was[pilot] and not self.alive(n, pilot) and pilot not in found:
+                    found[pilot] = list(hist)
+            if len(found) == 2:
+                break
+        self.assertEqual(sorted(found), [0, 1], 'no diver collision found for both pilots')
+        for pilot, frames in found.items():
+            for shield in (0, 200):
+                m = NES(self.rom)
+                m.load(frames[0][0])
+                m[self.SHIELD0 + pilot] = shield
+                hit = False
+                for _, pad in frames + [(None, frames[-1][1])] * 8:
+                    for k in range(7):
+                        m[0x284 + 4 * k] = 0
+                    m.controller = pad
+                    m.step()
+                    hit = hit or not self.alive(m, pilot)
+                self.assertEqual(hit, shield == 0, f'P{pilot + 1} diver collision, shield {shield}')
+
+    def test_shields_independent(self):
+        n = self.coop_at_edges()
+        n[0x284], n[0x287] = 0xC4, (n[SHIP_X] + 0x7C) & 0xFF   # both hit together
+        n[0x288], n[0x28B] = 0xC4, (n[P2_X] + 0x7C) & 0xFF
+        n.step(10)
+        self.assertFalse(self.alive(n, 0) or self.alive(n, 1))
+        self.assertEqual((n[self.SHIELD0], n[self.SHIELD0 + 1]), (240, 240))
+        self.wait_back(n, 0)
+        self.wait_back(n, 1)
+        both = (n[self.SHIELD0], n[self.SHIELD0 + 1])
+        self.assertTrue(all(both), 'both shielded at once')
+        self.assertNotEqual(both[0], both[1], 'separate counters')
+        self.assertTrue(self.survives(n, 0, 2) and self.survives(n, 1, 2))
+        while n[self.SHIELD0]:                           # P1's ends first, P2 still shielded
+            self.run_pads(n, [0])
+        p2 = n[self.SHIELD0 + 1]
+        self.assertGreater(p2, 0)
+        n[self.WLEVEL0 + 1] = 2
+        self.kill(n, 0)                                  # P1 dies: P2's shield and weapon stay
+        self.assertEqual(n[self.SHIELD0], 240)
+        self.assertLess(n[self.SHIELD0 + 1], p2)
+        self.assertGreater(n[self.SHIELD0 + 1], 0)
+        self.assertEqual(n[self.WLEVEL0 + 1], 2)
+        self.assertTrue(self.survives(n, 1, 2), 'P2 still protected')
+
+    def test_shield_after_life_sharing(self):
+        n = self.p1_out_p2_playing(p2_reserve=2)
+        n[self.SHIELD0 + 1] = 0
+        self.press_select(n, p2=True)
+        self.assertFalse(n[P1_OUT])
+        self.assertGreater(n[self.SHIELD0], 220, 'receiver P1 shielded')
+        self.assertEqual(n[self.SHIELD0 + 1], 0, 'donor not shielded')
+        self.assertTrue(self.survives(n, 0))
+        n = self.p2_out_p1_playing(p1_reserve=2)
+        n[self.SHIELD0] = 0
+        self.press_select(n, p1=True)
+        self.assertEqual(n[P2_STATE], 1)
+        self.assertGreater(n[self.SHIELD0 + 1], 220, 'receiver P2 shielded')
+        self.assertEqual(n[self.SHIELD0], 0, 'donor not shielded')
+        self.assertTrue(self.survives(n, 1))
+
+    def test_no_shield_at_game_or_stage_start(self):
+        n = self.start(self.rom, two=True)
+        n.step(3)
+        self.assertEqual((n[self.SHIELD0], n[self.SHIELD0 + 1]), (0, 0), 'new game')
+        self.kill(n, 0)
+        n = self.start(self.rom, two=True)
+        n.step(3)
+        self.clear_stage(n)
+        for _ in range(300):
+            n.step()
+            if n[SUBSTATE] == 8 and n[P1_DEAD] == 0:
+                break
+        n.step(3)
+        self.assertEqual((n[self.SHIELD0], n[self.SHIELD0 + 1]), (0, 0), 'next stage')
+        self.kill(n, 1)
+
+    def test_single_player_has_no_shield(self):
+        n = self.start(self.rom, two=False)
+        n[LIVES1] = 3
+        n.controller = pads(LEFT); n.step(60); n.controller = 0
+        self.kill(n, 0)
+        self.assertEqual(n[self.SHIELD0], 0)
+        self.wait_back(n, 0)
+        self.assertEqual(n[self.SHIELD0], 0)
+        for _ in range(30):                              # no blinking
+            f = n.step()
+            self.assertTrue(self.ship_shown(n, f, 0))
+        self.kill(n, 0)
+
+    def test_shield_blinking(self):
+        for pilot in (0, 1):
+            n = self.coop_at_edges()
+            nt0 = nametable(n)[26 * 32:28 * 32]
+            oam0 = [n[P2_OAM + k] for k in range(16)]
+            self.kill(n, pilot)
+            self.wait_back(n, pilot)
+            hidden = shot_seen = 0
+            if pilot == 1:                               # P2's shot stays visible while P2 blinks
+                self.run_pads(n, [0], [B])
+                n.controller = pads(0, B)
+            for i in range(300):
+                self.calm(n)
+                sh = n[self.SHIELD0 + pilot]
+                f = n.step()
+                if pilot == 1:                           # P2 is drawn after this frame's countdown,
+                    sh = n[self.SHIELD0 + 1]             # P1's background before it
+                shown = self.ship_shown(n, f, pilot)
+                self.assertEqual(shown, not self.blink_hidden(sh), f'P{pilot + 1} frame {i}, shield {sh}')
+                hidden += not shown
+                if pilot == 1 and not shown and n[self.BUL_Y0 + 4]:
+                    self.assertLess(n[P2_BUL_OAM], 0xEF, "P2's shot drawn")
+                    shot_seen += 1
+                if pilot == 1 and i == 2:
+                    n.controller = 0
+                if sh == 0:
+                    break
+            self.assertGreater(hidden, 100)
+            self.assertTrue(pilot == 0 or shot_seen, 'shot checked while P2 hidden')
+            for _ in range(60):                          # visible for good afterwards
+                self.calm(n)
+                f = n.step()
+                self.assertTrue(self.ship_shown(n, f, pilot))
+                self.assertTrue(self.ship_shown(n, f, 1 - pilot))
+            self.assertEqual(nametable(n)[26 * 32:28 * 32], nt0, 'ship rows unchanged')
+            if pilot == 1:
+                self.assertEqual([n[P2_OAM + k] for k in range(16) if k % 4 != 3],
+                                 [oam0[k] for k in range(16) if k % 4 != 3], 'P2 sprites as before')
+
+    # ------------------------------------------------------------ RC3: ghost shots, parity
+    SHOT_OAM = (0x280, 0x2BC, 0x2C0, 0x2C4, 0x2B0, 0x2B4, 0x2B8, 0x2C8)
+
+    def ghost_sprites(self, n, pilot):
+        """Shot sprites queued for the pilot's slots (the pilot is not in play)."""
+        return [a for a in self.SHOT_OAM[4 * pilot:4 * pilot + 4]
+                if n[a] < 0xEF and n[a + 1] in (0x30, 0x60)]
+
+    def away_without_shots(self, n, pilot, frames, until_back=True):
+        """Pilot away (hit, READY, waiting or out) while the partner fights on W4
+        and both pads mash FIRE: no shot of the pilot in RAM, OAM or score."""
+        other = 1 - pilot
+        row = 0x117 if pilot == 0 else 0x129
+        before = score(n, row)
+        phases = set()
+        for i in range(frames):
+            if until_back and self.alive(n, pilot) and n[SUBSTATE] == 8:
+                break
+            n[self.WLEVEL0 + other] = 3
+            n[LIVES1 + other] = max(n[LIVES1 + other], 3)
+            fire = B if (i // 3) % 2 == 0 else 0
+            n.controller = pads(fire, fire)
+            n.step()
+            if until_back and self.alive(n, pilot) and n[SUBSTATE] == 8:
+                break                                    # back: its ready shot may show
+            phases.add((n[SUBSTATE], n[P1_DEAD] != 0 if pilot == 0 else n[P2_STATE]))
+            self.assertEqual(self.flying(n, pilot), 0, f'P{pilot + 1} shot in RAM, frame {i}')
+            self.assertEqual(self.ghost_sprites(n, pilot), [], f'P{pilot + 1} shot sprite, frame {i}')
+        n.controller = 0
+        self.assertEqual(score(n, row), before, f'P{pilot + 1} scored while away')
+        return phases
+
+    def test_p1_death_no_ghost_shots(self):
+        for reserve in (1, 0):                           # X2 -> X1, X1 -> X0
+            n = self.coop_at_edges()
+            n[LIVES1] = reserve
+            n[self.WLEVEL0] = 3
+            self.run_pads(n, self.presses(4))
+            self.assertEqual(self.flying(n, 0), 4)
+            self.kill(n, 0)                              # a real hit by an enemy bullet
+            self.assertEqual(self.flying(n, 0), 0, 'shots removed at once')
+            self.assertEqual(self.ghost_sprites(n, 0), [], 'and their sprites')
+            phases = self.away_without_shots(n, 0, 900 if reserve else 600, until_back=bool(reserve))
+            if reserve:                                  # explosion, READY, back
+                self.assertIn((8, True), phases)
+                self.assertTrue(any(fe != 8 for fe, _ in phases), 'READY sequence covered')
+            else:                                        # X0: out of the fight
+                self.assertTrue(n[P1_OUT])
+                n[LIVES2] = 2
+                self.press_select(n, p2=True)            # revived by P2
+                self.assertFalse(n[P1_OUT])
+            self.assertEqual(n[self.WLEVEL0], 0, 'back on W1')
+            self.assertGreater(n[self.SHIELD0], 200, 'with a shield')
+            got = self.run_pads(n, [B] * 40)             # held through the return: nothing new
+            self.assertLessEqual(len(got[0]), 1)
+            got = self.run_pads(n, [0] * 4 + self.presses(3))
+            self.assertEqual(len(got[0]), 1, 'a new press: one W1 shot')
+
+    def test_p2_death_no_ghost_shots(self):
+        for reserve in (1, 0):
+            n = self.coop_at_edges()
+            n[LIVES2] = reserve
+            n[self.WLEVEL0 + 1] = 3
+            self.run_pads(n, [0] * 16, self.presses(4))
+            self.assertEqual(self.flying(n, 1), 4)
+            self.kill(n, 1)
+            self.assertEqual(self.flying(n, 1), 0)
+            self.assertEqual(self.ghost_sprites(n, 1), [])
+            self.away_without_shots(n, 1, 900 if reserve else 600, until_back=bool(reserve))
+            if not reserve:
+                self.assertEqual(n[P2_STATE], 0)
+                n[LIVES1] = 2
+                self.press_select(n, p1=True)
+                self.assertEqual(n[P2_STATE], 1)
+            self.assertEqual(n[self.WLEVEL0 + 1], 0)
+            self.assertGreater(n[self.SHIELD0 + 1], 200)
+            got = self.run_pads(n, [0] * 40, [B] * 40)
+            self.assertLessEqual(len(got[1]), 1)
+            got = self.run_pads(n, [0] * 16, [0] * 4 + self.presses(3))
+            self.assertEqual(len(got[1]), 1)
+
+    def shot_profile(self, n, pilot):
+        """Press FIRE once: (frames to the shot, its Y per frame, X kept, flight)."""
+        n.controller = 0
+        self.calm(n)
+        n.step()
+        lat, ys, xs = None, [], set()
+        for f in range(80):
+            self.calm(n)
+            n.controller = pads(B if f < 6 else 0, 0) if pilot == 0 else pads(0, B if f < 6 else 0)
+            n.step()
+            y = n[self.BUL_Y0 + 4 * pilot]
+            if y and lat is None:
+                lat = f + 1
+            if lat is not None:
+                if y == 0:
+                    break
+                ys.append(y)
+                xs.add(n[0x0E + 4 * pilot])
+        return lat, ys, len(xs) == 1
+
+    def test_weapon_parity(self):
+        n = self.coop_at_edges()
+        state = n.save()
+        flights = {0: 50, 1: 46, 2: 42, 3: 32}           # full flights measured at 100/110/120/160 %
+        for level in range(4):
+            got = []
+            for pilot in (0, 1):
+                n.load(state)
+                n[self.WLEVEL0], n[self.WLEVEL0 + 1] = level, level
+                lat, ys, x_kept = self.shot_profile(n, pilot)
+                self.assertTrue(x_kept, f'P{pilot + 1} W{level + 1}: shot X never changes')
+                n.load(state)
+                n[self.WLEVEL0], n[self.WLEVEL0 + 1] = level, level
+                presses = self.presses(level + 3)        # rapid presses, more than the pool
+                seq = (presses, [0] * len(presses)) if pilot == 0 else ([0] * len(presses), presses)
+                shots = self.run_pads(n, *seq)[pilot]
+                xs = {n[0x0E + 4 * pilot + k] for k in range(4) if n[self.BUL_Y0 + 4 * pilot + k]}
+                got.append((lat, ys, len(shots), self.flying(n, pilot)))
+                self.assertEqual(len(xs), 1, f'P{pilot + 1} W{level + 1}: all shots from one X')
+            self.assertEqual(got[0], got[1], f'W{level + 1}: P1 and P2 identical')
+            lat, ys, shots, flying = got[0]
+            self.assertEqual(lat, 2, 'shot on the 2nd frame of a press')
+            self.assertEqual(len(ys), flights[level], f'W{level + 1} flight frames')
+            self.assertEqual((shots, flying), (level + 1, level + 1), 'pool fills, extra presses blocked')
+        n.load(state)                                    # both W4: 8 shots at most
+        n[self.WLEVEL0], n[self.WLEVEL0 + 1] = 3, 3
+        most = 0
+        for i in range(60):
+            self.run_pads(n, [B if (i // 2) % 2 == 0 else 0], [B if (i // 2) % 2 == 0 else 0])
+            most = max(most, self.flying(n, 0) + self.flying(n, 1))
+        self.assertEqual(most, 8)
+
+    def test_w4_with_shields_stable(self):
+        import random
+        rnd = random.Random(5)
+        n = self.start(self.rom, two=True)
+        lag, resets = n[0x67E], 0
+        for i in range(60 * 60):
+            n[self.WLEVEL0], n[self.WLEVEL0 + 1] = 3, 3
+            n[LIVES1], n[LIVES2] = max(n[LIVES1], 3), max(n[LIVES2], 3)
+            for p in (0, 1):
+                if n[self.SHIELD0 + p] == 0:
+                    n[self.SHIELD0 + p] = 240
+            fire = B if (i // 3) % 2 == 0 else 0
+            n.controller = pads(fire | rnd.choice([0, LEFT, RIGHT]), fire | rnd.choice([0, LEFT, RIGHT]))
+            state = n[STATE]
+            n.step()
+            resets += state == 3 and n[STATE] in (0, 1)
+        self.assertEqual((resets, n[0x67E]), (0, lag), 'no reset, no lag frame')
+        self.assertFalse(n.has_crashed)
+
+    def test_hud_scores_follow_points(self):
+        """Scores and hi score are copied to the HUD only in frames with points
+        (HudScores): the screen must still follow every change."""
+        g = glyphs(Path(self.rom).read_bytes())
+        for two in (False, True):
+            n = self.start(self.rom, two=two)
+            for k in range(6):                           # hi score 000000: beaten at once
+                n[0x120 + k] = 0x10 if k < 5 else 0
+            for _ in range(6):
+                before = score(n, 0x117)
+                for _ in range(600):
+                    n[LIVES1] = max(n[LIVES1], 3)
+                    n.controller = pads(B if n[0x104] & 4 else 0)
+                    n.step()
+                    if score(n, 0x117) != before:
+                        break
+                n.controller = 0
+                want = [n[0x117 + k] for k in range(6)]
+                self.assertEqual([n[0x120 + k] for k in range(6)], want, 'hi score follows P1')
+                shown = None
+                for _ in range(12):
+                    f = n.step()
+                    p1 = [read_tile(f, g, c, 4) for c in range(4, 10)]
+                    hi = [read_tile(f, g, c, 4) for c in range(13, 19)]
+                    if p1 == hi == [n[0x117 + k] for k in range(6)]:
+                        shown = p1
+                        break
+                self.assertIsNotNone(shown, f'HUD shows {[n[0x117 + k] for k in range(6)]}')
+        n = self.start(self.rom, two=True)               # P2 sets the hi score (CoopHiScore)
+        for k in range(6):
+            n[0x120 + k] = 0x10 if k < 5 else 0
+        before = score(n, 0x129)
+        for _ in range(600):
+            n[LIVES2] = max(n[LIVES2], 3)
+            n.controller = pads(0, B if n[0x104] & 4 else 0)
+            n.step()
+            if score(n, 0x129) != before:
+                break
+        n.controller = 0
+        want = [n[0x129 + k] for k in range(6)]
+        shown = None
+        for _ in range(16):
+            f = n.step()
+            hi = [read_tile(f, g, c, 4) for c in range(13, 19)]
+            if hi == want:
+                shown = hi
+                break
+        self.assertEqual(shown, want, 'HUD hi score shows P2')
+
     def test_w4_stress_no_overrun(self):
         """Both pilots on W4 firing all the time (lives kept up): no frame overrun."""
         rnd = random.Random(3)
         n = self.start(self.rom, two=True)
-        prev = n[0x3A] | n[0x3B] << 8
+        prev = idle_counter(n)
         worst = 1 << 16
+        lag = n[0x67E]                                   # LAG_TOTAL: NMIs that overlapped
         for i in range(60 * 60 * 2):
             n[self.WLEVEL0], n[self.WLEVEL0 + 1] = 3, 3
             n[LIVES1], n[LIVES2] = max(n[LIVES1], 3), max(n[LIVES2], 3)
@@ -943,16 +1570,17 @@ class TestEmulator(unittest.TestCase):
             state = n[STATE]
             n.step()
             self.assertFalse(state == 3 and n[STATE] in (0, 1), 'NMI overrun reset the game')
-            cur = n[0x3A] | n[0x3B] << 8
+            cur = idle_counter(n)
             if n[STATE] == 3:
                 worst = min(worst, (cur - prev) & 0xFFFF)
             prev = cur
         self.assertGreater(worst, 0)
+        self.assertEqual(n[0x67E], lag, 'no lag frames')
 
     def test_stress_no_crash_or_overrun(self):
         rnd = random.Random(7)
         n = self.start(self.rom, two=True)
-        prev = n[0x3A] | n[0x3B] << 8
+        prev = idle_counter(n)
         worst = 1 << 16
         c = 0
         for i in range(60 * 60 * 3):
@@ -961,7 +1589,7 @@ class TestEmulator(unittest.TestCase):
                          rnd.choice([0, A, A | LEFT, A | RIGHT, LEFT, RIGHT]))
             n.controller = c
             n.step()
-            cur = n[0x3A] | n[0x3B] << 8
+            cur = idle_counter(n)
             if n[STATE] == 3 and n[SUBSTATE] == 8:
                 worst = min(worst, (cur - prev) & 0xFFFF)
             prev = cur

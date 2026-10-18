@@ -51,7 +51,7 @@ Confidence: **C** code + emulator, **K** code only, **H** hypothesis.
 
 ## 3. Galaxian Coop – hooks
 
-All 37 hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every original byte.
+All 38 hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every original byte.
 
 | Address | Original | New | Purpose |
 |---|---|---|---|
@@ -59,17 +59,18 @@ All 37 hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every o
 | `$E286` | `LDY #$EB` | `LDY #$EA` | compensates ScrollFix (−22 cycles) |
 | `$E2A5` | `JSR $E54D` | `JSR PreSplit` | constant-time bullet move/draw inside the raster wait |
 | `$E2A8` | `LDY #$BE` | `LDY #$A8` | wait shortened by exactly `PreSplit`'s 22 × 42 cycles |
+| `$E2E4` | `JSR $E2FE` | `JSR HudScores` | score/hi-score copy into the HUD buffer only in frames after points (RC3, CPU) |
 | `$E2CE` | `JSR $E373` | `JSR CoopPost` | P2 draw, ready bullets, banner, HUD, hi score, title badge |
 | `$E542` | scroll/ctrl writes | `JMP ScrollFix` | play: Y scroll `$EF` + nametable `$2800` → blank screen line 0 |
 | `$E5BA` | `JSR $E627` | `JSR P1Bullets` (RTS) | original P1 bullet replaced by the shared engine |
-| `$E5DF`, `$EC59` | `INC/DEC $4F` | `INC/DEC P1_BLOCK` | a P1 who is out can't be hit |
-| `$E611`, `$EC8F` | `LDA #1 / STA $4F` | `JSR SetP1Dead` | P1 hit: also `P1_BLOCK`, weapon reset |
+| `$E5DF`, `$EC59` | `INC/DEC $4F` | `INC/DEC P1_BLOCK` | a P1 who is out or shielded can't be hit |
+| `$E611`, `$EC8F` | `LDA #1 / STA $4F` | `JSR SetP1Dead` | P1 hit: also `P1_BLOCK`, `PilotDown`; keeps X/Y (`E61A` uses X) |
 | `$E833` | `JSR $E88D` | `JMP ScoreAdd` | every score: boost points, no-death points, W4, extra lives |
 | `$E913` | `JSR $F2B3` | `JSR CoopPre` | `P1_BLOCK`, bullet collisions for both pilots |
 | `$E91F` | `JSR $E9B1` | `JSR CoopMid` | life sharing, P2 movement/collisions/lives |
 | `$EB9C` | `JSR $E65E` | `JSR OrientHalf` | diver tilt every other frame (CPU) |
 | `$EE4E` | `LDX $9E / LDY $9D` | `JMP AimDiver` | dives alternate between P1 and P2 |
-| `$EEC0` | `LDA $4F` | `LDA P1_BLOCK` | P1 out: no movement |
+| `$EEC0` | `LDA $4F / BNE / JSR $EED6` | `JSR P1MoveGate` | P1 hit or out: no movement (the shield does not block it) |
 | `$F03F…$F061`, `$FC9B…$FCBA` | stars from `$02A0`, 24 | from `$02CC`, 13 | OAM for P2 and 8 bullets |
 | `$F666` | `INC $FE / LDA` | `JMP TitleExtra` | title rows `1 PILOT`, `2 PILOTS CO-OP`, credit |
 | `$F753` | OAM clear to 0 | `JMP ClearOam` | free sprites get blank tile `$10` (no "0" top-left) |
@@ -77,29 +78,33 @@ All 37 hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every o
 | `$FA5D` | `JMP $FB23` | `JMP P1OutOfLives` | P1 without ships sits out while P2 plays |
 | `$FA83` | `DEC $42 / LDA #0` | `JSR P1ShipGranted` | lives HUD; P1 spawn X (co-op: left) |
 | `$FAA0` | `LDA $31` | `LDA $3C` | no "PLAYER 1" banner on co-op respawns |
-| `$FC17` | `JMP $EFFF` | `JMP P1ShipRedraw` | no P1 ship redraw while P1 is out |
+| `$FC17` | `JMP $EFFF` | `JMP P1ShipRedraw` | no P1 ship redraw while P1 is out; `FireRearm` |
 | `$FC38` | `INC $59 / SEC` | `JSR StageCleared` | weapon boosts, co-op spawn positions, once per stage |
 
-## 4. Galaxian Coop – new routines (addresses of this build; see `build/Galaxian_Coop.mlb`)
+## 4. Galaxian Coop – new routines (addresses of the RC3 build; see `build/Galaxian_Coop.mlb`)
 
 | Routine | Address | What it does |
 |---|---|---|
 | `PreSplit`, `PrePilot` | `$9E00`, `$9E2F` | constant time (939 cycles): moves bullets (8.8 speed) and writes their sprites |
 | `ScrollFix` | `$9F00` | frame-start scroll; 42 cycles on both paths |
-| `CoopPre` / `BulletHits` | `$807A` / `$80B5` | builds the hittable-diver list; per pilot `PilotShots` |
-| `PilotShots` | `$8103` | per bullet: inline copy of `F381`'s tests (calls `F381` only for a real hit), `DiverHits`; one hit per frame; then `FireShot` |
-| `DiverHits` | `$820F` | `F2EF`'s test against the listed divers; `F31E` on a hit |
-| `FireShot` | `$8268` | `E5A8` fire rule for 1–4 slots |
-| `ScoreAdd` / `AfterScore` | `$8367` / `$8374` | `E836` then boost + no-death points, `CheckW4`, `ExtraLifeCheck` |
-| `ExtraLifeCheck`, `AwardLife` | `$83A4`, `$8423` | thousands from the score digits vs `NEXT_LIFE` (step 7); cap 9 lives |
-| `StageCleared`, `CheckW4` | `$8448`, `$84BC` | W1→W2 (2000), W2→W3 (5000), co-op free W2 once; W4 at 8000 no-death |
-| `CoopMid`, `P2Alive`, `P2Waiting`, `P2Exploding`, `P2Kill` | `$84E6…$8551` | P2 state machine |
-| `P2VsBullets`, `P2VsDivers` | `$8561`, `$85A2` | copies of the ship hit boxes for `P2_X` (alternate frames) |
-| `LifeShare`, `GiveFromP1/P2`, `LifeShareBonus` | `$869E…$873B` | SELECT edge, transfer, +200 via `E841`+`AfterScore` |
-| `NmiGuard` | `$8781` | lag frame instead of reset |
-| `CoopPost`, `BannerUpdate`, `BannerWanted` | `$87F6`, `$884A`, `$889F` | messages through the idle 26-byte row writer |
-| `TitleBadge` | `$89F9` | `CO-OP` sprites on the settled title |
-| `CoopHud`, `HudP1Lives`, `P1TotalLives`, `P2TotalLives` | `$8A4E…$8B3A` | HUD (every 4th frame), lives = reserve + ship in play |
+| `CoopPre` / `BulletHits` | `$808E`, `$812C` | builds the hittable-diver list; per pilot `PilotShots` |
+| `PilotShots` | `$817A` | per bullet: inline copy of `F381`'s tests (calls `F381` only for a real hit), `DiverHits`; one hit per frame; then `FireShot` |
+| `DiverHits` | `$8294` | `F2EF`'s test against the listed divers; `F31E` on a hit |
+| `FireShot`, `FireRearm` | `$82ED`, `$83F6` | one shot per new press for 1–4 slots (see §5); held button re-armed only after a release |
+| `BulletOwnerSlot`, `BulletHitDone` | `$821D`, `$8235` | shot under test → `$0280/$0283` for the original routines; afterwards P1 slot 0's sprite is put back (RC3) |
+| `HudScores` | `$8856` | `E2FE` (copy + hi score) only in score frames, `E342` stream every frame (RC3) |
+| `PilotDown` | `$8400` | death / revive: W1, boost and no-death points 0, the pilot's shots removed, co-op shield 240 |
+| `ShieldTick`, `ShieldHidden`, `P1Blink`, `P1MoveGate` | `$80C5`, `$80E0`, `$80FA`, `$8116` | respawn shield countdown, blink phase, P1 blink (background off after the ship split), P1 movement gate |
+| `ScoreAdd` / `AfterScore` | `$842E`, `$843B` | `E836` then boost + no-death points, `CheckW4`, `ExtraLifeCheck` |
+| `ExtraLifeCheck`, `AwardLife` | `$8470`, `$84EF` | thousands from the score digits vs `NEXT_LIFE` (step 7); cap 9 lives |
+| `StageCleared`, `PilotAlive`, `CheckW4` | `$8514`, `$8577`, `$8585` | W1→W2 (2000), W2→W3 (5000), co-op free W2 once, only for pilots alive and in play at the clear; W4 at 8000 no-death |
+| `CoopMid`, `P2Alive`, `P2Waiting`, `P2Exploding`, `P2Kill` | `$85AF`, `$85F1`, `$85CA`, `$8606`, `$8621` | P2 state machine |
+| `P2VsBullets`, `P2VsDivers` | `$8631`, `$8672` | copies of the ship hit boxes for `P2_X` (alternate frames) |
+| `LifeShare`, `GiveFromP1`, `GiveFromP2`, `LifeShareBonus` | `$876E`, `$878F`, `$87CB`, `$880E` | SELECT edge, transfer, +200 via `E841`+`AfterScore` |
+| `NmiGuard` | `$886A` | lag frame instead of reset |
+| `CoopPost`, `BannerUpdate`, `BannerWanted` | `$88E3`, `$893A`, `$898F` | messages through the idle 26-byte row writer |
+| `TitleBadge` | `$8AE9` | `CO-OP` sprites on the settled title |
+| `CoopHud`, `HudP1Lives`, `P1TotalLives`, `P2TotalLives` | `$8B3E`, `$8B95`, `$8C11`, `$8C2A` | HUD (every 4th frame), lives = reserve + ship in play |
 
 ## 5. Key design decisions
 
@@ -112,6 +117,10 @@ All 37 hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every o
   pilot's first slot.
 - **Speeds**: 8.8 fixed point – W1 4.00, W2 4.40 (`$66`), W3 4.80 (`$CC`), W4 6.40 px/frame
   (100 / 110 / 120 / 160 %). At 6.4 px per frame no 12/13-px hit window can be skipped.
+- **CPU measurement (corrected in RC3)**: the idle counter `$3A/$3B` is two instructions (`INC $3A`, then
+  `INC $3B` on a wrap); an NMI between them makes one reading 256 too low and the next 256 too high.
+  The measurement scripts and tests now read the interrupted PC (cynes state / NMI stack frame) and
+  correct it. The RC1/RC2 "worst frame" figures (15 and 1 iterations) were such artefacts.
 - **CPU budget**: the original leaves ~3300 cycles free in its worst frames. To fit 8 bullets: (a)
   bullet movement and sprites run in `PreSplit` inside the raster wait, made constant-time (every slot path
   84 cycles) and the wait shortened by the same amount, so the split timing is unchanged (verified: the
@@ -124,6 +133,34 @@ All 37 hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every o
   short window between a hit and the reserve decrement at `FA83` is covered by `P1_GRANTED`.
 - **Life sharing**: SELECT edge from `$EE/$EF` and `$F0/$F1` (previous/current); only in `FE`=8 (E913 does
   not run while paused). A revived P1 gets its background ship redrawn with `EFFF` (as `FBEB` does).
+- **`$0280/$0283` (RC3)**: the original hit routines (`F381`, `F2D1/F2EF`, `F31E`) read "the bullet" from
+  `$0280/$0283`, the original P1 bullet sprite. `BulletOwnerSlot` puts any pilot's shot there before a
+  call; `$0280` is also P1 slot 0's sprite and `PreSplit` had already drawn it, so after a P2 hit the next
+  frame showed a P1 shot where P2's shot hit (worst while P1 was dead or out: "P1 shooting from off
+  screen"). `BulletHitDone` now restores the slot. `PilotDown` also hides the shot sprites at once (they
+  were drawn earlier in the same frame).
+- **Zero page `$23/$24` (RC3)**: the pad routine (`E580–E59C`, every frame) stores the raw `$4016` value in
+  `$23` and counts microphone toggles in `$24` (Famicom microphone easter egg: 4 toggles with the reset
+  counter `$0115` = 10 jump to the reset path `E23A`). Up to RC2 `BUL_X` was `$1E–$25`, so P2's shots 2 and
+  3 had their X overwritten (shots flying from X 64) and a shot's X in `$24` could reach that jump. `BUL_X`
+  is now `$0E–$15`; `build.py` refuses any variable on one of the 115 zero-page addresses the original
+  uses directly.
+- **Fire (RC2)**: the original rule `E5A8` (counter 3 while released, a press fires when it reaches 0)
+  let the counter wrap from 0 to `$FF`: a held button fired again every 256 frames (~4.3 s). The first
+  version of the shared engine also skipped the counter while no slot was free, so a release was missed.
+  `FireShot` now updates the counter every frame, stops it at 0 (press used up) and re-arms it only on a
+  release; a press while all shots fly, or while the pilot is away, is used up. `FireRearm` clears it when
+  a ship comes back with the button held (P1's READY sequence does not run `FireShot`).
+- **Stage clear (RC2)**: the clear comes from `FA52`→`FC1A`, the same path as a lost P1 ship (`E94D`
+  `LDA $9F / ORA $4F`), so a pilot can be hit (exploding or waiting) at that moment. Such a pilot got the
+  free W2 before and kept it after the respawn; now `PilotAlive` is required.
+- **Respawn shield (co-op)**: `PilotDown` sets 240 frames; `ShieldTick` (from `CoopPre`, once per
+  game-logic frame) counts only while the ship is in play, so the 4 s start when the ship is back. P1:
+  the shield is ORed into `P1_BLOCK`, which only the two hit checks read; P2: `P2Alive` skips both
+  collision routines. Blinking: P2's sprites are hidden in `P2Draw`; P1 is background, so `P1Blink`
+  writes `$2001` = `$16` (background off, sprites on) right after the ship split – the ship and nothing else
+  is below it during play – and `E280` writes `$1E` at the next frame start. No nametable or OAM writes,
+  no extra sprites, timing of both splits unchanged.
 - **Top line**: in play the original scrolls with Y=`$FF`, so screen line 0 shows nametable row 31 = the
   attribute table read as tiles → the white dashes. `ScrollFix` uses Y=`$EF` with nametable `$2800` (like
   the title screen): line 0 comes from the blank row 29 of `$2800`, line 1 onward is unchanged.

@@ -96,7 +96,7 @@ MLB_RAM = ('PAD1', 'PAD2', 'SHIP_X', 'P1_DEAD', 'STATE', 'SUBSTATE', 'CUR_PLAYER
            'P1_GRANTED', 'TITLE_STEP', 'P1_REDRAW', 'BUL_Y', 'BUL_X', 'BUL_F', 'WLEVEL',
            'BOOST_LO', 'BOOST_HI', 'NEXT_LIFE_LO', 'NEXT_LIFE_HI', 'STAGE1_DONE', 'NODEATH_LO',
            'NODEATH_HI', 'DCOUNT', 'BANNER_CUR', 'BANNER_ROW', 'W4_TIMER', 'W4_WHO', 'DI',
-           'DLIST', 'HIT_DONE', 'SHOT_N', 'LOGIC_RAN', 'LASTK', 'LAG_COUNT', 'LAG_TOTAL')
+           'DLIST', 'HIT_DONE', 'SHOT_N', 'LOGIC_RAN', 'LASTK', 'LAG_COUNT', 'LAG_TOTAL', 'SHIELD', 'SCORE_NEW')
 
 
 # new RAM: name -> size; build fails if two of them overlap
@@ -106,8 +106,17 @@ RAM_SIZES = {'COOP': 1, 'P1_OUT': 1, 'P1_BLOCK': 1, 'P2_STATE': 1, 'P2_X': 1, 'P
              'STAGE1_DONE': 1, 'WLEVEL': 2, 'NODEATH_LO': 2, 'NODEATH_HI': 2, 'DCOUNT': 1,
              'BANNER_CUR': 1, 'BANNER_ROW': 1, 'W4_TIMER': 1, 'W4_WHO': 1, 'BOOST_LO': 2,
              'BOOST_HI': 2, 'DI': 1, 'NEXT_LIFE_LO': 2, 'NEXT_LIFE_HI': 2, 'BUL_F': 8, 'DLIST': 7,
-             'HIT_DONE': 1, 'SHOT_N': 1, 'LOGIC_RAN': 1, 'LASTK': 2, 'LAG_COUNT': 1,
+             'HIT_DONE': 1, 'SHOT_N': 1, 'LOGIC_RAN': 1, 'LASTK': 2, 'LAG_COUNT': 1, 'SHIELD': 2, 'SCORE_NEW': 1,
              'PS_MASK2': 1, 'LAG_TOTAL': 1}
+
+
+# Zero-page addresses the original program reads or writes directly (from the
+# full disassembly). None of the new variables may use them.
+ORIGINAL_ZP = {int(a, 16) for a in """
+    00 01 02 03 04 23 24 27 28 29 2A 2B 2C 2D 2E 2F 30 31 32 33 34 35 36 37 38 39 3A 3B 3C 3D 3E 3F
+    40 41 42 43 44 4C 4E 4F 50 51 53 54 57 58 59 5A 5B 63 64 65 66 67 68 6B 6C 6D 6E 6F 70 71 72 76
+    79 7E 80 81 8E 8F 90 91 92 9C 9D 9E 9F C0 C1 C2 C3 C7 CD D7 D8 DA DB DC DD DE DF E0 E1 E2 E3 E4
+    E5 E8 E9 EA EB EC ED EE EF F0 F1 F2 F6 F7 FA FB FD FE FF""".split()}
 
 
 def check_ram(asm):
@@ -118,6 +127,8 @@ def check_ram(asm):
             if a in used:
                 raise SystemExit(f'RAM overlap at ${a:04X}: {used[a]} and {name}')
             used[a] = name
+            if a in ORIGINAL_ZP:
+                raise SystemExit(f'{name} uses ${a:02X}, which the original game uses')
     # PreSplit is cycle-counted: it and its tables must stay in one page
     if asm.symbols['PreSplit'] >> 8 != (asm.symbols['PreSplitEnd'] - 1) >> 8:
         raise SystemExit('PreSplit crosses a page boundary')

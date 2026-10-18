@@ -25,21 +25,24 @@ P2_X        = $09       ; same convention as SHIP_X
 P2_TIMER    = $0A
 FIRE_CNT    = $0B       ; fire-button counters P1, P2 ($0B-$0C), rule of E5A8
 T2          = $0D
-CUR_SLOT    = $0E       ; bullet loop: slot index
-CUR_PL      = $0F       ; bullet loop: pilot (0 P1, 1 P2)
-T0          = $10
-T1          = $11
-AIM_TOGGLE  = $12       ; alternates the dive target between the players
-P1_GRANTED  = $13       ; P1 dead, next ship already taken from LIVES1 (FA83)
-TITLE_STEP  = $14       ; extra title rows already queued (0-3)
-P1_REDRAW   = $15       ; P1 revived by life sharing: ship tiles still to draw
+BUL_X       = $0E       ; $0E-$15: shots X
+CUR_SLOT    = $1E       ; bullet loop: slot index
+CUR_PL      = $1F       ; bullet loop: pilot (0 P1, 1 P2)
+T0          = $20
+T1          = $21
+TITLE_STEP  = $22       ; extra title rows already queued (0-3)
+; $23-$24 belong to the original (Famicom microphone check in E580-E59C).
+P1_GRANTED  = $25       ; P1 dead, next ship already taken from LIVES1 (FA83)
+; $011D-$011E: gap after P1's score row; only the reset code (E197) writes it
+; ($10): AIM_TOGGLE only uses its parity, P1_REDRAW is cleared by CoopInit.
+AIM_TOGGLE  = $011D     ; alternates the dive target between the players
+P1_REDRAW   = $011E     ; P1 revived by life sharing: ship tiles still to draw
 PAD1_PREV   = $EE       ; pads in the previous frame (E54D)
 PAD2_PREV   = $F0
 SELECT_BIT  = $20
 
 ; player bullets: 4 slots per pilot, P1 = slots 0-3, P2 = slots 4-7
 BUL_Y       = $16       ; $16-$1D: Y, 0 = free
-BUL_X       = $1E       ; $1E-$25
 STAGE1_DONE = $26       ; co-op: the free W2 for clearing stage 1 was given
 ; zero page below: never referenced by the original program and left at 0
 ; in emulator runs of title, demo, 1P and 2P games (see MEMORY_MAP.md)
@@ -69,6 +72,11 @@ DLIST       = $0688     ; $0688-$068E: OAM offsets of the divers that can be hit
 LIFE_STEP   = 7         ; extra life every 7000 points
 ; $067A-$067F: the end of the block the reset code copies from CHR to RAM
 ; ($0300-$067F); the last string ends at $0679 and no code reads these.
+; $0126-$0128: gap between the hi score ($0120-$0125) and P2's score row; only
+; the reset code (E197, FFA8) writes it, the score loops stay inside the rows.
+SHIELD      = $0126     ; $0126-$0127: respawn shield frames left P1, P2
+SHIELD_FRAMES = 240     ; 4 s at 60 Hz (3.99 s at NTSC 60.0988 Hz)
+SCORE_NEW   = $0128     ; frames E2FE still copies the scores (reset: $10)
 LASTK       = $067A     ; $067A-$067B: thousands digit at the last life check
 LAG_COUNT   = $067C     ; NMIs that overlapped the previous one, in a row
 PS_MASK2    = $067D     ; PreSplit: P2 visibility mask
@@ -115,10 +123,14 @@ REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 .patch $E91F, "20 B1 E9"            ; JSR $E9B1
         jsr CoopMid
 
-; P1 checks that must ignore a P1 who is out of the game: read P1_BLOCK
-; instead of $4F. In 1P / demo P1_BLOCK == $4F, so behaviour is unchanged.
-.patch $EEC0, "A5 4F"               ; movement
-        lda P1_BLOCK
+; P1 movement: blocked while P1 is hit or out of the game, not by the shield
+; (P1_BLOCK also holds the shield). In 1P / demo the same as LDA $4F.
+.patch $EEC0, "A5 4F D0 F5 20 D6 EE"    ; LDA $4F / BNE EEB9 / JSR EED6
+        jsr P1MoveGate
+        nop
+        nop
+        nop
+        nop
 ; P1's bullet (E627, called first in E5BA) is replaced by the shared
 ; bullet engine: same firing rule, 1-3 shots, 100/110/120 % speed.
 .patch $E5BA, "20 27 E6"            ; JSR $E627
@@ -137,6 +149,7 @@ REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 .patch $EC59, "E6 4F C6 4F"         ; diving enemy vs P1
         inc P1_BLOCK
         dec P1_BLOCK
+; P1_BLOCK = P1 hit, out, or shielded: no enemy bullet or diver hits P1.
 ; The two "P1 is hit" stores also set P1_BLOCK, so P1 can't be hit twice
 ; in one frame (as in the original, which re-read $4F).
 .patch $E611, "A9 01 85 4F"
@@ -161,6 +174,16 @@ REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 ; P1 ship redraw after a respawn: skipped once P1 is out of the game.
 .patch $FC17, "4C FF EF"            ; JMP $EFFF
         jmp P1ShipRedraw
+
+; E2FE copies P1's score and the hi score into the HUD buffer and updates the
+; hi score (~350 cycles) in every frame, then streams the buffer into the
+; VRAM queue (E342). In a game the scores only change in AfterScore (all
+; points, also the life-sharing bonus), at a new game (CoopInit, then FA3E)
+; and when P2 sets the hi score (CoopHiScore): copy in those frames and the
+; next one only (E2FE copies the hi score before updating it, so a new hi
+; score reaches the buffer one frame later); stream every frame as before.
+.patch $E2E4, "20 FE E2"                ; JSR $E2FE
+        jsr HudScores
 
 ; NMI arriving while the previous one still runs: the original treats it as
 ; a crash and resets the game (E22F). Treat it as one lag frame instead:
@@ -468,6 +491,8 @@ CoopInit:
         sta AIM_TOGGLE
         sta P1_GRANTED
         sta P1_REDRAW
+        lda #2                  ; scores are reset right after (FA3E)
+        sta SCORE_NEW
         jsr HudAttrReset
         jsr ResetPilots
         lda #0                  ; the original one-time extra ship is replaced
@@ -497,6 +522,8 @@ P1GameOver:
         jmp $FB23
 
 P1ShipRedraw:
+        ldx #0                  ; the ship is back (or a stage starts)
+        jsr FireRearm
         jsr IsCoop
         beq P1ShipRedrawGo
         lda P1_OUT
@@ -520,12 +547,21 @@ P1ShipGrantedSolo:
         lda #0
         rts
 
-; Replaces "LDA #1 / STA $4F" where P1 gets hit. Keeps A = 1.
+; Replaces "LDA #1 / STA $4F" where P1 gets hit. Returns A = 1 and keeps
+; X and Y: E611 goes on with STA $0284,X (removes the enemy bullet).
 SetP1Dead:
+        txa
+        pha
+        tya
+        pha
         ldx #0
-        jsr ResetBoost
+        jsr PilotDown
         lda #0
         sta P1_GRANTED
+        pla
+        tay
+        pla
+        tax
         lda #1
         sta P1_DEAD
         sta P1_BLOCK
@@ -541,6 +577,7 @@ CoopPre:
         sta P1_BLOCK
         jmp BulletHits
 CoopPreCoop:
+        jsr ShieldTick
         lda P1_OUT
         beq CoopPreBlock
         lda P2_STATE
@@ -557,8 +594,83 @@ CoopPreP2In:
         lda #1
 CoopPreBlock:
         ora P1_DEAD
+        ora SHIELD              ; respawn shield: no hits on P1
         sta P1_BLOCK
         jmp BulletHits
+
+; Respawn shields count down only while the ship is in play (not while it
+; explodes or waits), once per game-logic frame; a pause stops them.
+ShieldTick:
+        lda SHIELD
+        ora SHIELD+1
+        beq ShieldTickDone      ; no shield running (most frames)
+        ldx #1
+ShieldTickLoop:
+        lda SHIELD,x
+        beq ShieldTickNext
+        jsr PilotAlive
+        bne ShieldTickNext
+        dec SHIELD,x
+ShieldTickNext:
+        dex
+        bpl ShieldTickLoop
+ShieldTickDone:
+        rts
+
+; Shield blinking: 8 frames shown / 8 hidden, the last second 4 / 4; the
+; last phase is a hidden one, so the ship stays visible exactly from the
+; frame the shield ends. Never outside normal play.
+; A = shield frames left (not 0); Z=0 when hidden now.
+ShieldHidden:
+        tay
+        lda SUBSTATE
+        cmp #8
+        bne ShieldHiddenNo
+        dey                     ; frames left - 1: 0-59 = last second
+        tya
+        cmp #60
+        bcs ShieldHiddenSlow
+        and #4
+        eor #4
+        rts
+ShieldHiddenSlow:
+        and #8
+        eor #8
+        rts
+ShieldHiddenNo:
+        lda #0
+        rts
+
+; P1's ship is background below the ship split (E2CB), which happens just
+; before CoopPost: turning the background off now hides the ship for the
+; rest of this frame; sprites stay on. E280 turns it on again next frame.
+; No nametable or OAM change.
+P1Blink:
+        lda STATE
+        cmp #3
+        bne P1BlinkDone
+        lda P1_DEAD
+        ora P1_OUT
+        bne P1BlinkDone         ; exploding or out: nothing to blink
+        lda SHIELD
+        beq P1BlinkDone
+        jsr ShieldHidden
+        beq P1BlinkDone
+        lda #$16                ; $1E (E280) without the background
+        sta $2001
+P1BlinkDone:
+        rts
+
+; EEC0: P1 moves unless hit or out (RTS of EEC0's caller as BNE EEB9 did).
+P1MoveGate:
+        lda P1_DEAD
+        ora P1_OUT
+        beq P1MoveGateGo
+        pla
+        pla
+        rts
+P1MoveGateGo:
+        jmp $EED6
 
 ; Scoring for P2: E833 adds to the score row picked by $53.
 SwapToP2:
@@ -739,8 +851,18 @@ BulletOwnerSlot:
         sta HIT_FLAG
         rts
 
-; After a hit routine: C=1 if it hit something; $53 back to 0.
+; After a hit routine: C=1 if it hit something; $53 back to 0. $0280/$0283
+; held the tested shot (any pilot's) for the original routine; they are also
+; P1 slot 0's sprite, so put that back as PreSplit drew it (hidden when the
+; slot is free) - else another shot showed there for a frame.
 BulletHitDone:
+        lda BUL_Y
+        bne BulletHitDoneY
+        lda #$F8
+BulletHitDoneY:
+        sta P1_BUL_Y
+        lda BUL_X
+        sta P1_BUL_X
         lda #0
         sta CUR_PLAYER
         lda HIT_FLAG
@@ -810,7 +932,23 @@ P1Bullets:                      ; E627 replacement: P1's bullets are done in
         rts                     ; PilotShots (start of E913) for every mode
 
 ; Fire a new bullet for pilot X if a slot among the allowed ones is free.
+; One shot per new press of A/B. FIRE_CNT: 2 after a release; a press fires
+; on its 2nd frame (E5A8's timing); 0 = press used up, so holding the button
+; never fires again. The counter is updated every frame, whatever the slots:
+; a press while all shots are flying (or while the pilot can't fire) is used
+; up as well. (E5A8 let the counter wrap: a held button fired every 256
+; frames, and it skipped the counter while no shot was free.)
 FireShot:
+        jsr FireInput
+        bne FireShotHeld
+        lda #2                  ; released: next press may fire
+        sta FIRE_CNT,x
+        rts
+FireShotHeld:
+        lda FIRE_CNT,x
+        beq FireShotDone        ; this press was used up
+        dec FIRE_CNT,x
+        bne FireShotDone
         jsr CanFire
         bne FireShotDone
         ldy WLEVEL,x
@@ -826,16 +964,9 @@ FireShotFind:
         iny
         dec T1
         bne FireShotFind
-        rts                     ; none: like E640 not being reached
+        rts                     ; all shots flying
 FireShotFree:
         sty CUR_SLOT
-        jsr FireInput
-        bne FireShotHeld
-        lda #3
-        sta FIRE_CNT,x
-FireShotHeld:
-        dec FIRE_CNT,x
-        bne FireShotDone
         jsr ShipBulletX
         ldy CUR_SLOT
         sta BUL_X,y
@@ -851,7 +982,8 @@ FireShotDone:
 CanFire:
         cpx #0
         bne CanFireP2
-        lda P1_BLOCK
+        lda P1_DEAD             ; not P1_BLOCK: a shielded P1 fires
+        ora P1_OUT
         rts
 CanFireP2:
         lda P2_STATE
@@ -964,8 +1096,9 @@ ResetPilotsLoop:
         sta NEXT_LIFE_LO,x
         lda #0
         sta NEXT_LIFE_HI,x
-        lda #3
+        lda #0                  ; fire: a release first
         sta FIRE_CNT,x
+        sta SHIELD,x            ; no shield at the start of a game
         lda #$10                ; score starts blank ("    00")
         sta LASTK,x
         dex
@@ -983,6 +1116,48 @@ ResetBoost:
         sta NODEATH_HI,x
         rts
 
+; Pilot X's ship is back: a fire button held now (held through the respawn
+; or the READY sequence, where FireShot does not run) must be released first.
+FireRearm:
+        jsr FireInput
+        beq FireRearmDone
+        lda #0
+        sta FIRE_CNT,x
+FireRearmDone:
+        rts
+
+; Pilot X lost a ship, or comes back by a revive: W1 with no boost or
+; no-death points, its flying shots removed (PreSplit hides free slots),
+; and a 4 s shield in co-op. Uses A, Y. (FireShot keeps watching the button
+; while the pilot is away; FireRearm when the ship is back.)
+PilotDown:
+        jsr ResetBoost
+        lda COOP                ; co-op: 4 s shield once the ship is back
+        beq PilotDownSolo       ; (ShieldTick waits until then)
+        lda #SHIELD_FRAMES
+PilotDownSolo:
+        sta SHIELD,x
+        txa                     ; its 4 shots: freed, and their sprites hidden
+        pha                     ; now (PreSplit drew them earlier this frame)
+        asl a
+        asl a
+        tax
+        jsr PilotDownShot
+        jsr PilotDownShot
+        jsr PilotDownShot
+        jsr PilotDownShot
+        pla
+        tax
+        rts
+PilotDownShot:
+        lda #0
+        sta BUL_Y,x
+        ldy BulOamLo,x
+        lda #$F8
+        sta OAM,y
+        inx
+        rts
+
 ; E833 replacement entry. Outside a game E88D returned from E833's caller.
 ScoreAdd:
         pha
@@ -997,6 +1172,8 @@ ScoreAddGo:
 ; Shared tail of every score (enemies, life-sharing bonus): $57 = hundreds,
 ; $58 = tens of the points just added to pilot $53.
 AfterScore:
+        lda #2                  ; HudScores: copy the scores this frame and
+        sta SCORE_NEW           ; the next (E2FE shows a new hi score late)
         ldx CUR_PLAYER
         lda $57
         asl a
@@ -1123,12 +1300,16 @@ AwardLifeDone:
 ; per pilot and stage. W1->W2 needs 2000 boost points, W2->W3 5000; the
 ; points then restart. In co-op the first cleared stage gives W2 to every
 ; pilot still in the game, once per game. W4 is checked right away (CheckW4).
+; Boosts only for a pilot alive and in play now: one who was hit (exploding or
+; waiting for the next ship, also when the stage ends in the same moment) or
+; who is out gets none, and no free W2 later either. Both pilots are handled
+; before the one-time flag is set.
 StageCleared:
         inc $59
         jsr CoopSpawnPositions
         ldx #1
 StageClearedLoop:
-        jsr PilotInGame
+        jsr PilotAlive
         bne StageClearedNext
         jsr IsCoop
         beq StageClearedPoints
@@ -1184,18 +1365,16 @@ CoopSpawnDone:
         rts
 
 ; Z=1 when pilot X is in the game (not eliminated).
-PilotInGame:
+; Z=1 when pilot X is in play and not hit.
+PilotAlive:
         cpx #0
-        bne PilotInGameP2
+        bne PilotAliveP2
         lda P1_OUT
+        ora P1_DEAD
         rts
-PilotInGameP2:
+PilotAliveP2:
         lda P2_STATE
-        beq PilotInGameNo
-        lda #0
-        rts
-PilotInGameNo:
-        lda #1
+        cmp #1
         rts
 
 ; W3 -> W4 (red laser) as soon as 8000 points were scored without dying.
@@ -1262,8 +1441,8 @@ P2WaitingReady:
         sta P2_X
         lda #0
         sta P2_TIMER
-        lda #3
-        sta FIRE_CNT+1
+        ldx #1
+        jsr FireRearm
         lda #1
         sta P2_STATE
 P2WaitingDone:
@@ -1271,12 +1450,16 @@ P2WaitingDone:
 
 P2Alive:
         jsr P2Move
+        lda SHIELD+1
+        bne P2AliveDone         ; respawn shield: no hits on P2
         lda $0104               ; enemy bullets on even frames, divers on odd:
         lsr a                   ; bullets move 2 px/frame (smallest window 5),
         bcs P2AliveDivers       ; divers 1-3 px/frame (boxes >= 17 px)
         jmp P2VsBullets
 P2AliveDivers:
         jmp P2VsDivers
+P2AliveDone:
+        rts
 
 P2Exploding:
         inc P2_TIMER
@@ -1298,7 +1481,7 @@ P2ExplodingDone:
 
 P2Kill:
         ldx #1
-        jsr ResetBoost
+        jsr PilotDown
         lda #2
         sta P2_STATE
         lda #0
@@ -1508,8 +1691,6 @@ GiveFromP1:
         lda #0
         sta P2_X
         sta P2_TIMER
-        lda #3
-        sta FIRE_CNT+1
         lda #1
         sta P2_STATE            ; LIVES2 stays 0: this ship is the one in play
         lda SHIP_X              ; beside P1: right, or left near the edge
@@ -1527,7 +1708,8 @@ ReviveP2Left:
 ReviveP2Set:
         sta P2_X
         ldx #1
-        jsr ResetBoost
+        jsr PilotDown
+        jsr FireRearm
         lda #0                  ; donor P1
         beq LifeShareBonus
 
@@ -1563,7 +1745,8 @@ ReviveP1Set:
         lda #1
         sta P1_REDRAW
         ldx #0
-        jsr ResetBoost
+        jsr PilotDown
+        jsr FireRearm
         lda #1                  ; donor P2
 ; +200 points for the donor through the normal score path (E841 adds $54-$58
 ; to the row of pilot $53; AfterScore: boost points, extra lives).
@@ -1610,6 +1793,19 @@ OrientHalf:
         rts
 OrientHalfGo:
         jmp $E65E
+
+; ---------------------------------------------------------------- HUD scores
+HudScores:
+        lda STATE
+        cmp #3
+        bne HudScoresFull       ; other states: as the original
+        lda SCORE_NEW
+        beq HudScoresStream
+        dec SCORE_NEW
+HudScoresFull:
+        jmp $E2FE
+HudScoresStream:
+        jmp $E342               ; E2FE's tail: stream the HUD buffer
 
 ; ---------------------------------------------------------------- NMI guard
 NmiGuard:                       ; X = stack pointer after the 3 pushes
@@ -1658,7 +1854,8 @@ AimDiver:
         lda P2_STATE
         cmp #1
         bne AimP1
-        lda P1_BLOCK
+        lda P1_DEAD             ; a shielded P1 is still a target
+        ora P1_OUT
         bne AimP2
         inc AIM_TOGGLE
         lda AIM_TOGGLE
@@ -1682,6 +1879,7 @@ AimP1:
 
 ; ---------------------------------------------------------------- NMI tail
 CoopPost:
+        jsr P1Blink             ; first: right after the ship split
         lda #0                  ; this NMI finished in time
         sta LAG_COUNT
         jsr $E373
@@ -2088,6 +2286,8 @@ CoopHiScoreCopy:
         sta $0120,x
         dex
         bpl CoopHiScoreCopy
+        lda #1                  ; HudScores: show the new hi score
+        sta SCORE_NEW
 CoopHiScoreDone:
         rts
 
@@ -2129,6 +2329,12 @@ P2DrawOn:
         beq P2DrawShip
         jmp P2HideShip
 P2DrawShip:
+        lda SHIELD+1            ; respawn shield: blink
+        beq P2DrawShipOn
+        jsr ShieldHidden
+        beq P2DrawShipOn
+        jmp P2HideShip
+P2DrawShipOn:
         lda #SHIP_OAM_Y
         sta P2_OAM+0
         sta P2_OAM+4

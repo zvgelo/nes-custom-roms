@@ -32,7 +32,7 @@ CHR changes in Galaxian Coop (all checked by `build.py` before writing):
 | Address | Meaning | Conf. |
 |---|---|---|
 | `$00–$04` | start-up music player (`FF0E`) | K |
-| `$23–$24` | Famicom microphone detection (`$4016` bit 2) | K |
+| `$23–$24` | Famicom microphone easter egg: `$23` = raw `$4016` every frame, `$24` counts bit-2 toggles; 4 toggles with `$0115` = 10 → reset path `E23A` (`E580–E59C`) | C |
 | `$27`, `$28` | formation counters (limit attack waves) | H |
 | `$29` | "after player change" flag (alternating 2P) | K |
 | `$2A` | "NMI in progress" flag | C |
@@ -83,7 +83,8 @@ States `$FF`: 0 init, 1 title, 2 demo, 3 game, 4 GAME OVER, 5 end screen. Game s
 |---|---|---|
 | `$0101–$0115` | reset flags / signature | K |
 | `$0104` | frame counter (bit 0: stars every second frame) | C |
-| `$0116–$012F` | scores: P1 `$0117–$011C`, hi `$0120–$0125`, P2 `$0129–$012E` (digits 0–9, `$10` blank) | C |
+| `$0115` | reset counter (`E04F`), used by the microphone easter egg | C |
+| `$0116–$012F` | scores: P1 `$0117–$011C`, hi `$0120–$0125`, P2 `$0129–$012E` (digits 0–9, `$10` blank); `$011D–$011F`, `$0126–$0128`, `$012F` only written by the reset code (`E197`, fills `$10`; `FFA8`) | C |
 | `$0130–$014D` | stack (S starts at `$4D`; the NMI resets the game when S < `$30`) | C |
 | `$014E–$01FF` | sound data copied from CHR | K |
 | `$0200–$027F` | OAM: 8 diver slots × 4 sprites (slot 7 = formation-enemy explosion) | C |
@@ -106,20 +107,19 @@ ranges included) **and** unchanged in long emulator runs of title, demo, 1P and 
 |---|---|---|
 | `$05` | `COOP` | 1 = co-op game |
 | `$06` | `P1_OUT` | P1 out of the game, P2 plays on |
-| `$07` | `P1_BLOCK` | `$4F` or `P1_OUT`: used instead of `$4F` in P1 input/hit checks |
+| `$07` | `P1_BLOCK` | `$4F` or `P1_OUT` or the P1 shield: used instead of `$4F` in the two P1 hit checks (movement, firing and dive aiming test `$4F`/`P1_OUT` only) |
 | `$08` | `P2_STATE` | 0 out, 1 alive, 2 exploding, 3 waiting to respawn |
 | `$09` | `P2_X` | P2 ship X (same convention as `$E4`) |
 | `$0A` | `P2_TIMER` | explosion / respawn timer |
-| `$0B–$0C` | `FIRE_CNT` | fire-button counters P1, P2 |
+| `$0B–$0C` | `FIRE_CNT` | fire-button counters P1, P2: 2 = released, a press fires on its 2nd frame, 0 = press used up |
 | `$0D` | `T2` | temporary (`FORM_K` during the bullet pass) |
-| `$0E`, `$0F` | `CUR_SLOT`, `CUR_PL` | bullet loop: slot, pilot (PreSplit temporaries too) |
-| `$10`, `$11` | `T0`, `T1` | temporaries |
-| `$12` | `AIM_TOGGLE` | dives alternate between the pilots |
-| `$13` | `P1_GRANTED` | P1 dead, next ship already taken from `$42` |
-| `$14` | `TITLE_STEP` | extra title rows written (0–3) |
-| `$15` | `P1_REDRAW` | P1 revived: background ship still to draw |
+| `$0E–$15` | `BUL_X` | player bullets X (RC2 and earlier: `$1E–$25`, overlapping the original's `$23/$24`) |
 | `$16–$1D` | `BUL_Y` | player bullets Y (P1 slots 0–3, P2 slots 4–7); 0 = free |
-| `$1E–$25` | `BUL_X` | player bullets X |
+| `$1E`, `$1F` | `CUR_SLOT`, `CUR_PL` | bullet loop: slot, pilot (PreSplit temporaries too) |
+| `$20`, `$21` | `T0`, `T1` | temporaries |
+| `$22` | `TITLE_STEP` | extra title rows written (0–3) |
+| `$23–$24` | – | the original's (microphone check), not used |
+| `$25` | `P1_GRANTED` | P1 dead, next ship already taken from `$42` |
 | `$26` | `STAGE1_DONE` | co-op: free W2 for the first stage already given |
 
 ### Other zero page and `$06xx`
@@ -141,11 +141,19 @@ ranges included) **and** unchanged in long emulator runs of title, demo, 1P and 
 | `$FC` | `LOGIC_RAN` | `$FF` when the game logic ran this frame |
 | `$0680–$0687` | `BUL_F` | bullets: Y fraction (8.8 speed) |
 | `$0688–$068E` | `DLIST` | OAM offsets of the divers that can be hit this frame |
+| `$011D` | `AIM_TOGGLE` | dives alternate between the pilots (only bit 0 matters; `$10` after reset) |
+| `$011E` | `P1_REDRAW` | P1 revived: background ship still to draw (cleared by `CoopInit`) |
+| `$0126–$0127` | `SHIELD` | respawn shield frames left P1, P2 (co-op; 240 = 4 s) |
+| `$0128` | `SCORE_NEW` | frames in which `E2FE` still copies the scores (2 after points, 1 after a P2 hi score) |
 | `$067A–$067B` | `LASTK` | thousands digit at the last extra-life check |
 | `$067C` | `LAG_COUNT` | overlapped NMIs in a row |
 | `$067D` | `PS_MASK2` | PreSplit: P2 visibility mask |
 | `$067E` | `LAG_TOTAL` | overlapped NMIs since power-on (diagnostics) |
 
+`$011D–$011E` and `$0126–$0128` lie between the score rows; only the reset code writes there (score
+loops stay inside the 6-digit rows), unchanged in long emulator runs of both ROMs. Since RC3
+`build.py` also refuses any new variable on one of the 115 zero-page addresses the original program
+reads or writes directly (`ORIGINAL_ZP`).
 `$067A–$067F` belong to the block the reset code copies from CHR (`$0300–$067F`), but the last
 string ends at `$0679` and nothing reads these bytes. `build.py` refuses overlapping new variables.
 `$07F0` is not used.
