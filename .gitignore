@@ -4,7 +4,8 @@
 *.unf
 *.zip
 
-# Build output
+# Build output and local ROM folders
+private/
 build/
 out/
 
