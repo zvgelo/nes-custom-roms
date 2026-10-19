@@ -47,7 +47,7 @@ SELECT_BIT  = $20
 
 ; player bullets: 4 slots per pilot, P1 = slots 0-3, P2 = slots 4-7
 BUL_Y       = $16       ; $16-$1D: Y, 0 = free
-STAGE1_DONE = $26       ; co-op: the free W2 for clearing stage 1 was given
+STAGE1_DONE = $26       ; the free W2 for clearing stage 1 was given (1P and co-op)
 ; zero page below: never referenced by the original program and left at 0
 ; in emulator runs of title, demo, 1P and 2P games (see MEMORY_MAP.md)
 WLEVEL      = $45       ; $45-$46: weapon level P1, P2: 0-3 = W1-W4
@@ -56,8 +56,8 @@ NODEATH_HI  = $49
 DCOUNT      = $4B       ; divers in DLIST
 BANNER_CUR  = $4D       ; message shown on HUD rows 1-2 (0 = none)
 BANNER_ROW  = $52       ; next banner row to write (0 = up to date)
-W4_TIMER    = $69       ; frames left for the "great shot" message
-W4_WHO      = $6A       ; bit 0 = P1, bit 1 = P2 got W4
+W4_TIMER    = $69       ; frames left for the overdrive message (OD_MSG)
+W4_WHO      = $6A       ; pilots the message is about: bit 0 = P1, bit 1 = P2
 BOOST_LO    = $7A       ; $7A-$7D: boost points P1, P2 (units of 10)
 BOOST_HI    = $7C
 DI          = $D9       ; loop index / temporary
@@ -89,8 +89,15 @@ BUL_LV      = $035D     ; $035D-$0364: weapon level each shot was fired with
 STG_SHOWN   = $0365     ; stage number on HUD row 2 (STATUS_BLANK / _UNKNOWN)
 TMR_SHOWN   = $0366     ; $0366-$0367: overdrive seconds on HUD row 2 (same)
 BY_SHOT     = $0368     ; 1 while a bullet's hit is scored (x2 only for shots)
-DIVE_CELL   = $0369     ; $0369-$036F: overdrive dive boost: 8-px cell of y last boosted
-DIVE_RR     = $0370     ; overdrive dive boost: diver slot of this frame
+; $0369-$0370: free (RC4-RC5 dive boost state, DIVE_CELL / DIVE_RR)
+OD_PEND     = $0371     ; $0371-$0372: overdrive ready (W3 + 8000 no-death
+                        ; points): starts with the next stage (OdStart)
+OD_ARM      = $0373     ; a stage was cleared: ready overdrives start in the
+                        ; first normal-play frame (FE = 8) after it
+OD_MSG      = $0374     ; message on HUD row 1 for W4_TIMER frames: OD_MSG_*
+OD_NOW      = $0375     ; an overdrive just started: status row due at once
+OD_COLS     = $0376     ; $0376-$0377: formation columns 0-9 redrawn since the
+                        ; stage started (bit per column; OdStart waits for all)
 LASTK       = $067A     ; $067A-$067B: thousands digit at the last life check
 LAG_COUNT   = $067C     ; NMIs that overlapped the previous one, in a row
 PS_MASK2    = $067D     ; PreSplit: P2 visibility mask
@@ -243,25 +250,30 @@ REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 .patch $EB9C, "20 5E E6"            ; JSR $E65E
         jsr OrientHalf
 
-; Overdrive aggression (OdActive: any pilot's overdrive running). Three
-; hooks into the original attack logic, all inactive without an overdrive.
+; Overdrive aggression (OdActive: any pilot's overdrive running). Hooks
+; into the original attack logic, all inactive without an overdrive.
 ; F415 (every frame): counters of solo attacks step every 4th frame; also on
-; frames where $ED & 15 = 2: 5 steps per 16 frames, +25 % attack attempts.
-; The extra step skips F49C (the flagship timer), so flagship waves keep
-; their period.
+; frames where $ED & 7 = 2: 6 steps per 16 frames, +50 % attack attempts
+; (RC4: 5 per 16). The extra step skips F49C (the flagship timer), so
+; flagship waves keep their period.
 .patch $F45F, "A5 ED 29 03 D0 A7"   ; LDA $ED / AND #3 / BNE F40C (RTS)
         jmp AtkGate
         nop
         nop
         nop
-; A solo attack is dropped while the flagship attack window ($35) is open;
-; in overdrive it goes ahead (slots 3-6 are the solo divers' own: the
-; maximum number of divers stays the stage's).
-.patch $F48B, "A5 35 D0 0C"         ; LDA $35 / BNE F49B (RTS)
-        jsr SoloGate
+; (RC4-RC5 also let solo attacks start during the flagship attack window
+; $35 in overdrive; RC6 raises the solo-slot limit instead, SoloLimit, and
+; keeps the original window: measured +59 % dive starts instead of +87 %.)
+; F10E picks a free solo-diver slot up to F134/F13C[$65] (the attack level
+; sets how many solo divers may fly at once); in overdrive one level higher
+; (RC6; at most 7, the game's own top: slots 3-6).
+.patch $F10E, "A4 59 C0 01 A4 65"   ; LDY $59 / CPY #1 / LDY $65
+        jsr SoloLimit
+        nop
+        nop
         nop
 ; Enemy bullets aim at $E4 (EE23): in co-op at P2 instead when only P2 is in
-; overdrive (3 frames out of 4).
+; overdrive (7 frames out of 8; both: alternately).
 .patch $EE23, "18 A5 E4"            ; CLC / LDA $E4
         jsr BulletAimX
 
@@ -269,6 +281,31 @@ REVIVE_GAP  = 24        ; a revived pilot appears this far beside the partner
 .patch $EE4E, "A6 9E A4 9D"         ; LDX $9E / LDY $9D
         jmp AimDiver
         nop
+
+; HUD right part (buffer $0690-$069B / $06B0-$06BB = rows 3-4, cols 20-31):
+; the original draws reserve-ship icons there (E897, cols 21-23) and the
+; stage flags (E8B2, cols 25-29; from stage 6 one flag and the number, row
+; 4 cols 26-27), at a game start (FA41/FA44), a respawn (FB0E/FB11) and a
+; stage start (FBF8/FBFB). Lives are shown as "Xn" in both modes, so E897
+; does nothing now (RC6; RC1-RC5 overwrote its icons every 4th frame,
+; SoloHud). The flags stay in 1 PILOT; in co-op the area is P2's (CoopHud),
+; so E8B2 does nothing there (RC1-RC5: flags and stage digits could show for
+; a few frames in P2's score at a stage start or a respawn).
+.patch $E897, "20 8D E8"            ; JSR $E88D (E897: reserve-ship icons)
+        rts
+        nop
+        nop
+.patch $E8B2, "20 8D E8"            ; JSR $E88D (E8B2: stage flags)
+        jsr StageFlags
+
+; Demo pilot (F518): it fires when $0280 = $C8, the original bullet resting
+; on the ship. $0280 is now P1 slot 0's sprite, which PreSplit hides ($F8)
+; before the logic runs, so the demo never fired (RC1-RC5). DemoBullet gives
+; the original's view of slot 0.
+.patch $F5A5, "AD 80 02"            ; LDA $0280
+        jsr DemoBullet
+.patch $F5DF, "AD 80 02"            ; LDA $0280
+        jsr DemoBullet
 
 ; NMI: E2CE calls the game logic dispatcher; P2 is drawn right after it.
 .patch $E2CE, "20 73 E3"            ; JSR $E373
@@ -558,6 +595,7 @@ CoopInit:
         sta P1_REDRAW
         lda #2                  ; scores are reset right after (FA3E)
         sta SCORE_NEW
+        jsr HudRightClear
         jsr HudAttrReset
         jsr ResetPilots
         lda #0                  ; the original one-time extra ship is replaced
@@ -633,17 +671,18 @@ SetP1Dead:
         rts
 
 ; ---------------------------------------------------------------- E913 start
+; The respawn shield works in every game (1P and co-op), not in the demo.
 CoopPre:
         lda #$FF
         sta LOGIC_RAN
-        jsr W4Tick
-        jsr IsCoop
-        bne CoopPreCoop
-        lda P1_DEAD
-        sta P1_BLOCK
-        jmp BulletHits
-CoopPreCoop:
+        jsr OdStart             ; before W4Tick: the start frame is the first
+        jsr W4Tick              ; of the overdrive's 720
+        lda STATE
+        cmp #3
+        bne CoopPreDemo
         jsr ShieldTick
+        lda COOP
+        beq CoopPreBlock        ; 1P: A = 0
         lda P1_OUT
         beq CoopPreBlock
         lda P2_STATE
@@ -661,6 +700,10 @@ CoopPreP2In:
 CoopPreBlock:
         ora P1_DEAD
         ora SHIELD              ; respawn shield: no hits on P1
+        sta P1_BLOCK
+        jmp BulletHits
+CoopPreDemo:
+        lda P1_DEAD
         sta P1_BLOCK
         jmp BulletHits
 
@@ -1033,6 +1076,14 @@ DiverHitsXNo:
 P1Bullets:                      ; E627 replacement: P1's bullets are done in
         rts                     ; PilotShots (start of E913) for every mode
 
+; A = P1 slot 0 as the original bullet: $C8 ready on the ship, else its Y.
+DemoBullet:
+        lda BUL_Y
+        bne DemoBulletDone
+        lda #$C8
+DemoBulletDone:
+        rts
+
 ; Fire a new bullet for pilot X if a slot among the allowed ones is free.
 ; One shot per new press of A/B. FIRE_CNT: 2 after a release; a press fires
 ; on its 2nd frame (E5A8's timing); 0 = press used up, so holding the button
@@ -1193,6 +1244,9 @@ ResetPilots:
         sta W4_WHO
         sta OD_SND
         sta BY_SHOT
+        sta OD_ARM
+        sta OD_MSG
+        sta OD_NOW
         lda #STATUS_UNKNOWN     ; status row: drawn again (after the banner
         sta STG_SHOWN           ; blanked it)
         sta TMR_SHOWN
@@ -1223,7 +1277,8 @@ ResetPilotsLoop:
 
 ; Pilot X back to its base weapon (death, revive, new game): W2 once it
 ; unlocked W2 in this game, else W1. Boost (W3 progress) and no-death points
-; to 0, overdrive off and usable again in the new life.
+; to 0, overdrive off (also one only ready: cancelled, not given back by a
+; revive) and usable again in the new life.
 ResetBoost:
         lda W2_OWNED,x
         sta WLEVEL,x
@@ -1234,6 +1289,7 @@ ResetBoost:
         sta NODEATH_HI,x
         sta W4_USED,x
         sta W4_SEC,x
+        sta OD_PEND,x
         rts
 
 ; Pilot X's ship is back: a fire button held now (held through the respawn
@@ -1246,16 +1302,20 @@ FireRearm:
 FireRearmDone:
         rts
 
-; Pilot X lost a ship, or comes back by a revive: W1 with no boost or
-; no-death points, its flying shots removed (PreSplit hides free slots),
-; and a 4 s shield in co-op. Uses A, Y. (FireShot keeps watching the button
-; while the pilot is away; FireRearm when the ship is back.)
+; Pilot X lost a ship, or comes back by a revive: base weapon (ResetBoost),
+; its flying shots removed (PreSplit hides free slots), and a 4 s shield in
+; a game, 1P or co-op (not in the demo). Uses A, Y. (FireShot keeps watching
+; the button while the pilot is away; FireRearm when the ship is back.)
 PilotDown:
         jsr ResetBoost
-        lda COOP                ; co-op: 4 s shield once the ship is back
-        beq PilotDownSolo       ; (ShieldTick waits until then)
+        lda STATE               ; 4 s shield once the ship is back
+        cmp #3                  ; (ShieldTick waits until then)
+        bne PilotDownDemo
         lda #SHIELD_FRAMES
-PilotDownSolo:
+        bne PilotDownShield
+PilotDownDemo:
+        lda #0
+PilotDownShield:
         sta SHIELD,x
         txa                     ; its 4 shots: freed, and their sprites hidden
         pha                     ; now (PreSplit drew them earlier this frame)
@@ -1467,20 +1527,22 @@ AwardLifeDone:
 ; Stage cleared (replaces INC $59 / SEC at FC38): at most one weapon level
 ; per pilot and stage. W1->W2 needs 2000 boost points, W2->W3 4000 more
 ; (counted from 0 when W2 was given: no surplus is carried over); the
-; points then restart. W2 once given stays the base level after a death. In co-op the first cleared stage gives W2 to every
-; pilot still in the game, once per game. W4 is checked right away (CheckW4).
-; Point boosts only for a pilot alive and in play now. The free W2 also goes
-; to a pilot who was hit but has a ship coming (exploding or waiting, with a
-; reserve ship): it starts that ship with W2. A pilot out, or hit on its last
-; ship, gets none, and no free W2 later either. Both pilots are handled
-; before the one-time flag is set.
+; points then restart. W2 once given stays the base level after a death. In
+; every game (1P and co-op; not the demo) the first cleared stage gives W2 to
+; every pilot still in the game, once per game. W4 is checked right away
+; (CheckW4). Point boosts only for a pilot alive and in play now. The free W2
+; also goes to a pilot who was hit but has a ship coming (exploding or
+; waiting, with a reserve ship): it starts that ship with W2. A pilot out, or
+; hit on its last ship, gets none, and no free W2 later either. Both pilots
+; are handled before the one-time flag is set (in 1P P2 is out: none).
 StageCleared:
         inc $59
         jsr CoopSpawnPositions
         ldx #1
 StageClearedLoop:
-        jsr IsCoop
-        beq StageClearedAlive
+        lda STATE
+        cmp #3
+        bne StageClearedAlive
         lda STAGE1_DONE
         bne StageClearedAlive
         lda WLEVEL,x            ; free W2 for a W1 pilot; W2-W4 pilots go
@@ -1513,10 +1575,15 @@ StageClearedGrant:
 StageClearedNext:
         dex
         bpl StageClearedLoop
-        jsr IsCoop
-        beq StageClearedDone
+        lda STATE
+        cmp #3
+        bne StageClearedDone
         lda #1
         sta STAGE1_DONE
+        sta OD_ARM              ; ready overdrives start with the next stage
+        lda #0                  ; (once its formation is on screen)
+        sta OD_COLS
+        sta OD_COLS+1
 StageClearedDone:
         sec
         rts
@@ -1576,14 +1643,21 @@ PilotComingOut:
         lda #1
         rts
 
-; W3 -> W4 (red laser overdrive) as soon as 8000 points were scored
-; without dying, once per life (W4_USED): 30 s of play, then W3 again.
+; RC6 overdrive states per pilot: READY -> ACTIVE -> EXPIRED / CANCELLED.
+; READY (OD_PEND): on W3, 8000 points scored without dying, overdrive not
+; used in this life (W4_USED). The pilot stays on W3 (no x2, no aggression,
+; no countdown); "OVERDRIVE READY NEXT STAGE" on row 1, "W4 RDY" on row 2.
+; ACTIVE: from the first normal-play frame of the next stage (OdStart): W4,
+; 12 s, x2, aggression, jingle, "OVERDRIVE!" and the counter-attack.
+; EXPIRED: W4Tick, after 720 normal-play frames: W3. CANCELLED: a death or a
+; revive (ResetBoost) clears READY and ends ACTIVE; a new game clears all.
 ; X = pilot, kept.
 CheckW4:
         lda WLEVEL,x
         cmp #2
         bne CheckW4Done
         lda W4_USED,x
+        ora OD_PEND,x
         bne CheckW4Done
         lda NODEATH_HI,x
         cmp #>800
@@ -1593,25 +1667,138 @@ CheckW4:
         cmp #<800
         bcc CheckW4Done
 CheckW4Grant:
-        lda #3
-        sta WLEVEL,x
         lda #1
-        sta W4_USED,x
-        lda #W4_SECONDS
-        sta W4_SEC,x
-        lda #60
-        sta W4_FRM,x
-        jsr SfxOverdrive
+        sta OD_PEND,x
+        lda #OD_MSG_READY
+        jmp OdBanner
+CheckW4Done:
+        rts
+W4Bit:          .byte 1, 2
+W4_FRAMES = 120
+W4_SECONDS = 12                 ; 12 x 60 = 720 logic frames (11.98 s NTSC)
+OD_MSG_READY = 1
+OD_MSG_GO    = 2
+
+; Row-1 message A (OD_MSG_*) about pilot X for W4_FRAMES frames; pilots
+; with the same message are named together. Keeps X.
+OdBanner:
+        cmp OD_MSG
+        beq OdBannerAdd
+        sta OD_MSG
+        lda #0
+        sta W4_WHO
+OdBannerAdd:
         lda W4Bit,x
         ora W4_WHO
         sta W4_WHO
         lda #W4_FRAMES
         sta W4_TIMER
-CheckW4Done:
         rts
-W4Bit:          .byte 1, 2
-W4_FRAMES = 120
-W4_SECONDS = 30                 ; 30 x 60 = 1800 logic frames (29.95 s NTSC)
+
+; The first frame of the next stage (after a cleared stage, OD_ARM) with the
+; enemies on screen: at a stage start the nametable has no formation yet;
+; the game redraws one formation column per frame from the queue $A0-$BF
+; (EF7E, bits $C3), and EEE5 queues column $C2 = 9..0 in turn (then 12 idle
+; frames). So in normal play (FE = 8) the columns queued are collected in
+; OD_COLS; with all 10 seen and the queue empty ($C1 = $C0) every column has
+; been drawn: ~10-23 frames after the stage's first playable frame. In that
+; frame every pilot with an overdrive READY and in play gets it: W4, 12 s
+; (W4Tick counts this frame as the first), x2 and the aggression (all keyed
+; on W4_SEC, so they start together), the jingle, "OVERDRIVE!" (row 1,
+; written in the next NMI with this frame's sprites) and the countdown
+; (status row at the next chance, OD_NOW), then the counter-attack. Runs
+; once per cleared stage (a stage-number wrap can't repeat it).
+OdStart:
+        lda OD_ARM
+        beq OdStartDone
+        lda SUBSTATE
+        cmp #8
+        bne OdStartDone
+        lda STATE
+        cmp #3
+        bne OdStartDone
+        ldx $C2                 ; column queued in the last animation step
+        cpx #10
+        bcs OdStartReady
+        lda OD_COLS
+        ora ColBitLo,x
+        sta OD_COLS
+        lda OD_COLS+1
+        ora ColBitHi,x
+        sta OD_COLS+1
+OdStartReady:
+        lda OD_COLS
+        cmp #$FF
+        bne OdStartDone
+        lda OD_COLS+1
+        cmp #$03
+        bne OdStartDone
+        lda $C1                 ; queue drained: the last column is drawn
+        cmp $C0
+        bne OdStartDone
+        lda #0
+        sta OD_ARM
+        sta T2                  ; pilots started now
+        ldx #1
+OdStartLoop:
+        lda OD_PEND,x
+        beq OdStartNext
+        lda #0
+        sta OD_PEND,x
+        jsr PilotAlive
+        bne OdStartNext
+        lda #3
+        sta WLEVEL,x
+        lda #1
+        sta W4_USED,x
+        sta T2
+        sta OD_NOW
+        lda #W4_SECONDS
+        sta W4_SEC,x
+        lda #60
+        sta W4_FRM,x
+        lda #OD_MSG_GO
+        jsr OdBanner
+OdStartNext:
+        dex
+        bpl OdStartLoop
+        lda T2
+        beq OdStartDone
+        jsr SfxOverdrive
+        jmp OdAttack
+OdStartDone:
+        rts
+ColBitLo:       .byte $01, $02, $04, $08, $10, $20, $40, $80, $00, $00
+ColBitHi:       .byte $00, $00, $00, $00, $00, $00, $00, $00, $01, $02
+
+; Counter-attack at the start of an overdrive: three solo dives launched
+; now by the game's own routines, as F415 launches them, without waiting
+; for its attack counters: F151 (outermost alien from the left), F173 (from
+; the right), F151 again. Each takes a free solo slot (F10E: slots 3 up to
+; F134/F13C[$65]) and returns at once when none is free or no alien is
+; left; the dive is the normal one (launch arc, then the dive aimed by
+; EE4E). At a stage start the attack level $65 allows only 1-2 solo slots;
+; for these launches it is 3 (slots 3-5: 3 divers from stage 2 on, 2 on a
+; stage 1 after the wrap; the game uses up to 4 solo slots at level 7),
+; then put back. Not while P1 is hit (F415's own rule). AIM_TOGGLE = 0:
+; AimDiver gives the next three dive targets to the overdrive pilot (both
+; in overdrive: alternately).
+OdAttack:
+        lda #0
+        sta AIM_TOGGLE
+        lda P1_DEAD
+        bne OdAttackDone
+        lda $65
+        pha
+        lda #3
+        sta $65
+        jsr $F151
+        jsr $F173
+        jsr $F151
+        pla
+        sta $65
+OdAttackDone:
+        rts
 
 ; Overdrive countdown, once per game-logic frame of normal play only (FE=8):
 ; a pause (no E913), the READY / respawn / stage-change sequences and a
@@ -1650,6 +1837,12 @@ BoostNeedHi:    .byte >200, >400
 CoopMid:
         jsr $E9B1
         jsr DiveBoost
+        lda STATE
+        cmp #3
+        beq CoopMidFire
+        lda #0                  ; demo: the original single shot (W1), whatever
+        sta WLEVEL              ; level the last game left
+CoopMidFire:
         ldx #0
         jsr FireShot            ; P1 (also 1P and the demo)
         jsr IsCoop
@@ -2201,11 +2394,20 @@ AimP2:
         jsr $EE52
         pla
         sta SHIP_X
-        rts
+        jmp AimShots
 AimP1:
         ldx $9E
         ldy $9D
-        jmp $EE52
+        jsr $EE52
+; EE52 gave the diver its shots for this aim ($06E8: 2 on stage 1, else 3);
+; in overdrive one more (RC6). At most 7 enemy shots at once stays the
+; game's limit (E5BA's slots). Keeps X ($9E) and Y ($9D) as EE52 left them.
+AimShots:
+        jsr OdActive
+        beq AimShotsDone
+        inc $06E8,x
+AimShotsDone:
+        rts
 
 ; ---------------------------------------------------------------- aggression
 ; Z=0 while any pilot's overdrive runs (W4_SEC is 0 outside overdrive, after
@@ -2242,83 +2444,88 @@ AtkGateExtra:
         jsr OdActive
         beq AtkGateDone
         lda $ED
-        and #$0F
+        and #7
         cmp #2
         bne AtkGateDone
-        jmp $F468               ; the extra step: counters only
+        jmp $F468               ; the extra steps: counters only
 AtkGateDone:
         rts                     ; as F40C: returns from F415
 
-SoloGate:                       ; F48B
-        lda $35
-        beq SoloGateGo
+; Y = attack level for the solo-slot limit, C = stage 2 or later ($59 >= 1),
+; as F10E-F113 left them; A is free (F114 on reloads it).
+SoloLimit:
+        ldy $65
         jsr OdActive
-        beq SoloGateBlock
-SoloGateGo:
-        rts                     ; F48F: launch
-SoloGateBlock:
-        pla
-        pla
-        rts                     ; as F49B: returns from F415
+        beq SoloLimitStage
+        cpy #7
+        bcs SoloLimitStage
+        iny
+SoloLimitStage:
+        lda $59
+        cmp #1
+        rts
 
-; Dives (states 2/7, EB9C: y + 1 per frame) ~14 % faster in overdrive: one
-; diver slot per frame (round robin), after the divers moved: + 1 more once
-; per 8-px cell of its y (DIVE_CELL), never from y = 15 mod 16 (the next
-; value is a fire row, tested after EB9C's step). The ship hit bands (5 and
-; 14 px, P2 5 px) can't be skipped by 2 px a frame; x, the launch arc and
-; the return to the formation (exact frame counts) are unchanged. Nothing
-; to do without an overdrive.
+; Dives (states 2/7, EB9C: y + 1 per frame) ~23 % faster in overdrive
+; (RC4: ~14 %): every diving slot, after the divers moved, + 1 more when its
+; y mod 16 is 3, 8 or 13 (16 px in 13 frames). Never from y = 15 mod 16
+; (the next value is a fire row, tested after EB9C's step) and at most 1
+; extra px per diver and frame: the ship hit bands (5 and 14 px, P2 5 px)
+; can't be skipped; x, the launch arc and the return to the formation
+; (exact frame counts) are unchanged. Nothing to do without an overdrive.
 DiveBoost:
         jsr OdActive
         beq DiveBoostDone
-        ldx DIVE_RR
-        dex
-        cpx #7
-        bcc DiveBoostSlot
         ldx #6
-DiveBoostSlot:
-        stx DIVE_RR
+DiveBoostLoop:
         lda DIVER_STATE,x
         cmp #2
         beq DiveBoostDiver
         cmp #7
-        bne DiveBoostDone
+        bne DiveBoostNext
 DiveBoostDiver:
         ldy DiverOamY,x
         lda OAM,y
         and #$0F
-        cmp #$0F
-        beq DiveBoostDone
-        lda OAM,y
-        lsr a
-        lsr a
-        lsr a
-        cmp DIVE_CELL,x
-        beq DiveBoostDone       ; this cell had its extra pixel
+        tay
+        lda DiveBoostRow,y
+        beq DiveBoostNext
+        ldy DiverOamY,x
         lda OAM,y
         clc
         adc #1
         sta OAM,y
-        lsr a
-        lsr a
-        lsr a
-        sta DIVE_CELL,x         ; the cell it is in now: not twice
+DiveBoostNext:
+        dex
+        bpl DiveBoostLoop
 DiveBoostDone:
         rts
+DiveBoostRow:   .byte 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0
 DiverOamY:      .byte $00, $10, $20, $30, $40, $50, $60
 
+; Co-op: P2 alone in overdrive: 7 shots of 8 aimed at P2 (RC4: 3 of 4);
+; both in overdrive: every other frame P1 / P2; else at P1 (the original).
 BulletAimX:                     ; EE23: A = x to aim at, C = 0; keeps X, Y
         jsr IsCoop
         beq BulletAimP1
-        jsr OdTarget
-        cmp #2
-        bne BulletAimP1
         lda P2_STATE
         cmp #1
         bne BulletAimP1
-        lda $ED
-        and #3
+        jsr OdActive
         beq BulletAimP1
+        jsr OdTarget
+        cmp #1
+        beq BulletAimP1
+        cmp #2
+        beq BulletAimP2Alone
+        lda $ED                 ; both: alternate
+        and #1
+        beq BulletAimP1
+        bne BulletAimP2
+BulletAimP2Alone:
+        lda $ED
+        and #7
+        beq BulletAimP1
+BulletAimP2:
         lda P2_X
         clc
         rts
@@ -2340,10 +2547,13 @@ CoopPost:
 CoopPostNoReady:
         jsr TitleBadge
         jsr BannerUpdate
+        lda OD_NOW              ; an overdrive just started: its countdown now
+        bne CoopPostStatus
         lda $0104               ; status row on frames 2 mod 4 (no HUD work)
         and #3
         cmp #2
         bne CoopPostStatusDone
+CoopPostStatus:
         jsr StatusRow
 CoopPostStatusDone:
         lda STATE
@@ -2355,18 +2565,10 @@ CoopPostStatusDone:
         bne CoopPostDone        ; HUD stream on 3 (HudScores). The HUD data
         jsr HudP1Lives          ; changes rarely.
         lda COOP
-        beq SoloHud
+        beq CoopPostDone        ; 1P: rows 3-4 cols 20-31 hold the original flags
         jsr P1RedrawShip
         jsr CoopHud
         jmp CoopHiScore
-SoloHud:                        ; 1P: drop E897's reserve-ship icons
-        lda #$10                ; (row 3/4 cols 21-23); stage flags stay
-        sta $0691
-        sta $0692
-        sta $0693
-        sta $06B1
-        sta $06B2
-        sta $06B3
 CoopPostDone:
         rts
 
@@ -2436,15 +2638,18 @@ BannerUpdateDone:
 
 ; ---------------------------------------------------------------- status row
 ; HUD row 2 (lines 17-24, never written by the original in play):
-;   cols 2-7   "W4 30s" P1's overdrive seconds left (above P1's "W4")
-;   cols 13-18 "STG 01" stage number, co-op only (1P keeps its stage flags)
-;   cols 22-27 "W4 30s" P2's overdrive seconds left, above P2's "2UP" (cols
+;   cols 2-7   "W4 12s" P1's overdrive seconds left (above P1's "W4"), or
+;              "W4 RDY" while P1's overdrive waits for the next stage
+;   cols 13-18 "STG 01" stage number, 1P and co-op (1P also keeps the
+;              original stage flags of E8B2 in rows 3-4, cols 25-29)
+;   cols 22-27 the same for P2, above P2's "2UP" (cols
 ;              28-29 of rows 2-3 have palette 1 for P2's ship icon: blue digits)
 ; Each field is queued (VRAM queue, 3 entries of 2 cells) only when the value
 ; it shows changes, and only while the row writer is idle and the banner
 ; has nothing pending (the banner blanks the row at the start of a game).
 STATUS_UNKNOWN = $FF            ; field state unknown: draw it
 STATUS_BLANK   = $FE            ; field blank
+STATUS_READY   = $FD            ; "W4 RDY"
 StatusRow:
         lda BANNER_ROW
         bne StatusRowDone
@@ -2454,6 +2659,8 @@ StatusRow:
         lda $39
         cmp #$E1
         bne StatusRowDone
+        lda #0                  ; the row is being brought up to date
+        sta OD_NOW
         jsr StageWanted
         cmp STG_SHOWN
         beq StatusRowTimers
@@ -2473,9 +2680,14 @@ StatusTimer:                    ; X = pilot
         cpy #3
         bne StatusTimerSet
         ldy W4_SEC,x            ; non-zero only while overdrive runs
-        beq StatusTimerSet
+        beq StatusTimerReady
         tya
         ora #$80                ; seconds + $80: "W4 nnS"
+        bne StatusTimerSet
+StatusTimerReady:
+        ldy OD_PEND,x
+        beq StatusTimerSet
+        lda #STATUS_READY
 StatusTimerSet:
         cmp TMR_SHOWN,x
         beq StatusRowDone
@@ -2495,8 +2707,6 @@ StageWanted:
         lda STATE
         cmp #3
         bne StageWantedBlank
-        lda COOP
-        beq StageWantedBlank
         lda $59
         clc
         adc #1
@@ -2511,6 +2721,8 @@ StatusField:
         sty T2
         cmp #STATUS_BLANK
         beq StatusFieldBlank
+        cmp #STATUS_READY
+        beq StatusFieldReady
         tax
         and #$7F
         ldy #$FF                ; tens / units (0-99)
@@ -2547,6 +2759,22 @@ StatusFieldTimer:               ; "W4" " " tens units "S"
         lda #SECONDS_TILE
         sta T1
         jmp StatusPair
+StatusFieldReady:               ; "W4" " R" "DY"
+        lda #W_TILE
+        sta T0
+        lda #$0C
+        sta T1
+        jsr StatusPair
+        lda #$10
+        sta T0
+        lda #$22
+        sta T1
+        jsr StatusPair
+        lda #$14
+        sta T0
+        lda #$29
+        sta T1
+        jmp StatusPair
 StatusFieldDigits:
         sta T1
         jsr StatusPair
@@ -2576,23 +2804,31 @@ StatusPair:
         inc T2
         rts
 
-; A = wanted message: W4 achievement (timed) first, then the revive prompt.
+; A = wanted message: the overdrive message (timed: READY 5-8, started
+; 9-12; P1, P2, both, 1P) first, then the revive prompt (1-4).
 BannerWanted:
         lda W4_TIMER
         beq BannerWantedCoop
         dec W4_TIMER
         jsr IsCoop
-        beq BannerWantedShot
+        beq BannerWantedSolo
         lda W4_WHO
         and #3                  ; 1 P1, 2 P2, 3 both -> 5, 6, 7
         clc
         adc #4
-        rts
-BannerWantedShot:
+        bne BannerWantedKind
+BannerWantedSolo:
         lda #8
+BannerWantedKind:
+        ldy OD_MSG
+        cpy #OD_MSG_GO
+        bne BannerWantedDone
+        clc
+        adc #4
+BannerWantedDone:
         rts
 BannerWantedCoop:
-        sta W4_WHO              ; A = 0: achievement shown
+        sta W4_WHO              ; A = 0: message shown
         lda STATE
         cmp #3
         bne BannerWantedNone
@@ -2626,8 +2862,8 @@ BannerWantedNone:
         rts
 
 BLANK_ROW = $E1F2               ; 26 x $10 in the original ROM
-BannerRow1Lo:   .byte <BLANK_ROW, <BanReviveP1, <BanReviveP2, <BanOutP1, <BanOutP2, <BanShotP1, <BanShotP2, <BanShotBoth, <BanShot
-BannerRow1Hi:   .byte >BLANK_ROW, >BanReviveP1, >BanReviveP2, >BanOutP1, >BanOutP2, >BanShotP1, >BanShotP2, >BanShotBoth, >BanShot
+BannerRow1Lo:   .byte <BLANK_ROW, <BanReviveP1, <BanReviveP2, <BanOutP1, <BanOutP2, <BanReadyP1, <BanReadyP2, <BanReadyBoth, <BanReady, <BanGoP1, <BanGoP2, <BanGoBoth, <BanGo
+BannerRow1Hi:   .byte >BLANK_ROW, >BanReviveP1, >BanReviveP2, >BanOutP1, >BanOutP2, >BanReadyP1, >BanReadyP2, >BanReadyBoth, >BanReady, >BanGoP1, >BanGoP2, >BanGoBoth, >BanGo
 ; red letters and red digits ($0A "1", $0B "2", $0C "4")
 BanReviveP1:    ; "P2 SELECT TO REVIVE P1"
         .byte $10, $10, $20, $0B, $10, $23, $15, $1C, $15, $13, $24, $10, $24
@@ -2641,18 +2877,30 @@ BanOutP1:       ; "P1 OUT"
 BanOutP2:       ; "P2 OUT"
         .byte $10, $10, $10, $10, $10, $10, $10, $10, $10, $10, $20, $0B, $10
         .byte $1F, $25, $24, $10, $10, $10, $10, $10, $10, $10, $10, $10, $10
-BanShotP1:      ; "P1 GREAT SHOT"
-        .byte $10, $10, $10, $10, $10, $10, $20, $0A, $10, $17, $22, $15, $11
-        .byte $24, $10, $23, $18, $1F, $24, $10, $10, $10, $10, $10, $10, $10
-BanShotP2:      ; "P2 GREAT SHOT"
-        .byte $10, $10, $10, $10, $10, $10, $20, $0B, $10, $17, $22, $15, $11
-        .byte $24, $10, $23, $18, $1F, $24, $10, $10, $10, $10, $10, $10, $10
-BanShotBoth:    ; "BOTH PILOTS GREAT SHOT"
-        .byte $10, $10, $12, $1F, $24, $18, $10, $20, $19, $1C, $1F, $24, $23
-        .byte $10, $17, $22, $15, $11, $24, $10, $23, $18, $1F, $24, $10, $10
-BanShot:        ; "GREAT SHOT"
-        .byte $10, $10, $10, $10, $10, $10, $10, $10, $17, $22, $15, $11, $24
-        .byte $10, $23, $18, $1F, $24, $10, $10, $10, $10, $10, $10, $10, $10
+BanReadyP1:    ; "P1 W4 READY NEXT STAGE"
+        .byte $10, $10, $20, $0A, $10, $27, $04, $10, $22, $15, $11, $14, $29
+        .byte $10, $1E, $15, $28, $24, $10, $23, $24, $11, $17, $15, $10, $10
+BanReadyP2:    ; "P2 W4 READY NEXT STAGE"
+        .byte $10, $10, $20, $0B, $10, $27, $04, $10, $22, $15, $11, $14, $29
+        .byte $10, $1E, $15, $28, $24, $10, $23, $24, $11, $17, $15, $10, $10
+BanReadyBoth:  ; "P1 P2 W4 READY NEXT STAGE"
+        .byte $20, $0A, $10, $20, $0B, $10, $27, $04, $10, $22, $15, $11, $14
+        .byte $29, $10, $1E, $15, $28, $24, $10, $23, $24, $11, $17, $15, $10
+BanReady:      ; "OVERDRIVE READY NEXT STAGE"
+        .byte $1F, $26, $15, $22, $14, $22, $19, $26, $15, $10, $22, $15, $11
+        .byte $14, $29, $10, $1E, $15, $28, $24, $10, $23, $24, $11, $17, $15
+BanGoP1:       ; "P1 OVERDRIVE!"
+        .byte $10, $10, $10, $10, $10, $10, $20, $0A, $10, $1F, $26, $15, $22
+        .byte $14, $22, $19, $26, $15, $34, $10, $10, $10, $10, $10, $10, $10
+BanGoP2:       ; "P2 OVERDRIVE!"
+        .byte $10, $10, $10, $10, $10, $10, $20, $0B, $10, $1F, $26, $15, $22
+        .byte $14, $22, $19, $26, $15, $34, $10, $10, $10, $10, $10, $10, $10
+BanGoBoth:     ; "P1 P2 OVERDRIVE!"
+        .byte $10, $10, $10, $10, $10, $20, $0A, $10, $20, $0B, $10, $1F, $26
+        .byte $15, $22, $14, $22, $19, $26, $15, $34, $10, $10, $10, $10, $10
+BanGo:         ; "OVERDRIVE!"
+        .byte $10, $10, $10, $10, $10, $10, $10, $10, $1F, $26, $15, $22, $14
+        .byte $22, $19, $26, $15, $34, $10, $10, $10, $10, $10, $10, $10, $10
 
 ; ---------------------------------------------------------------- title badge
 ; "CO-OP" as 5 sprites rising 2 px per letter over the logo's bottom-right
@@ -2716,6 +2964,7 @@ LIFE_TOP    = $6E
 LIFE_BOT    = $6F
 X_TILE      = $28       ; letter X
 SECONDS_TILE = $36      ; "s" after the overdrive seconds (CHR, build.py)
+EXCL_TILE   = $34       ; "!" of "OVERDRIVE!" (CHR, build.py)
 W_TILE      = $27       ; letter W
 VQ_LO2      = $0748     ; VRAM queue (E4EF): second byte, first byte,
 VQ_LO1      = $0758     ; address low, address high; count in $E1 (max 16)
@@ -2763,6 +3012,32 @@ CoopHudScore:
         ldy #$01                ; $23CF = %00000001: rows 4-5, cols 28-29 -> palette 1
         jsr HudAttrQueue
 CoopHudDone:
+        rts
+
+; New game (both modes): rows 3-4 cols 20-31 of the HUD buffer blank. In
+; co-op CoopHud fills them; in 1 PILOT only the original stage flags go
+; there (E8B2 runs right after, FA41). RC1-RC5 left a co-op game's P2
+; fields ("U" of 2UP, a score digit, W and X digits: cols 24 and 30) in a
+; following 1 PILOT game.
+HudRightClear:
+        ldx #11
+        lda #$10
+HudRightClearLoop:
+        sta $0690,x
+        sta $06B0,x
+        dex
+        bpl HudRightClearLoop
+        rts
+
+; E8B2's first instruction: in co-op return from E8B2 (no flags in P2's
+; area); else E88D, its own check (it returns from E8B2 outside a game).
+StageFlags:
+        jsr IsCoop
+        bne StageFlagsCoop
+        jmp $E88D
+StageFlagsCoop:
+        pla
+        pla
         rts
 
 ; P1 lives (both modes): icon rows 3-4 col 1, "X" + lives row 4 cols 2-3.

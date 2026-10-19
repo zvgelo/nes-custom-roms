@@ -110,28 +110,79 @@ class TestTrace(unittest.TestCase):
                 return
         self.fail('no points')
 
+    def next_stage(self, c):
+        """Empty the formation; run through F0, the first frame of the next
+        stage with its formation drawn (where a READY overdrive starts: the
+        game clears OD_ARM then); returns F0's frame number."""
+        arm = self.sym['OD_ARM']
+        for k in range(10):
+            c.ram[0xC3 + k] = 0
+        armed = False
+        for _ in range(1200):
+            self.keep_alive(c)
+            f = c.frame
+            c.run_frame()
+            if c.ram[arm]:
+                armed = True
+            elif armed:
+                return f
+        raise AssertionError('no next stage')
+
     def test_overdrive_jingle_once(self):
-        """The triangle (unused by the game) plays the 7-note arpeggio once, in
-        the frames right after W4 starts; never before, not again while W4 lasts."""
+        """RC6: 8000 no-death points on W3 make the overdrive READY: no jingle
+        yet. The triangle (unused by the game) plays the 7-note arpeggio once,
+        starting with the frame W4 starts at the next stage - the frame its
+        counter-attack divers leave the formation; not again while W4 lasts."""
         c = self.game()
         c.ram[WLEVEL] = 2
         c.ram[NODEATH_LO], c.ram[NODEATH_HI] = 799 & 0xFF, 799 >> 8
-        start = c.frame
         self.fire_until_score(c, 0)
-        self.assertEqual(c.ram[WLEVEL], 3)
-        on = c.frame
+        self.assertEqual((c.ram[WLEVEL], c.ram[self.sym['OD_PEND']]), (2, 1))
+        for _ in range(60):
+            c.run_frame()
+        self.assertEqual([1 for f, r, v, pc in c.apu if r == 0x400A], [], 'no jingle while READY')
+        f0 = self.next_stage(c)
+        self.assertEqual((c.ram[WLEVEL], c.ram[self.sym['W4_SEC']]), (3, 12))
+        self.assertEqual(sum(1 for k in range(7) if c.ram[0x738 + k] == 1), 3, 'counter-attack launched')
         for _ in range(60):
             c.run_frame()
         tri = [(f, v) for f, r, v, pc in c.apu if r == 0x400A]
         self.assertEqual([v for f, v in tri], ARPEGGIO)
-        self.assertTrue(all(on - 1 <= f <= on + 30 for f, v in tri), (on, tri))
-        self.assertTrue(all(f >= start for f, v in tri))
-        for i in range(1200):                            # more kills during W4: no second jingle
+        self.assertTrue(all(f0 <= f <= f0 + 30 for f, v in tri), (f0, tri))
+        for i in range(600):                             # more kills during W4: no second jingle
             self.keep_alive(c)
             c.pads = [B if i % 4 < 2 else 0, 0]
             c.run_frame()
         self.assertEqual(len([1 for f, r, v, pc in c.apu if r == 0x400A]), 7)
         self.assertEqual({hex(pc) for f, r, v, pc in c.apu if r in (0x4008, 0x400A, 0x400B) and pc < 0x8000}, set())
+
+    def test_solo_overdrive_sounds(self):
+        """RC6: 1 PILOT has the same overdrive sounds: the jingle once at the
+        start, the zap for every W4 shot, FEA8's shot otherwise."""
+        c = self.game(two=False)
+        c.ram[WLEVEL] = 2
+        c.ram[self.sym['OD_PEND']] = 1
+        self.next_stage(c)
+        self.assertEqual(c.ram[WLEVEL], 3)
+        for k in range(8):
+            c.ram[0x16 + k] = 0
+        for i in range(24):
+            self.keep_alive(c)
+            if i % 8 == 0:
+                for k in range(8):
+                    c.ram[0x16 + k] = 0
+            c.pads = [B if i % 8 < 4 else 0, 0]
+            c.run_frame()
+        c.pads = [0, 0]
+        for _ in range(12):
+            c.run_frame()
+        tri = [v for f, r, v, pc in c.apu if r == 0x400A]
+        self.assertEqual(tri, ARPEGGIO)
+        zaps = {}
+        for f, r, v, pc in c.apu:
+            if 0x4004 <= r <= 0x4007 and 0x8000 <= pc < 0xE000:
+                zaps.setdefault(f, []).append(v)
+        self.assertEqual(list(zaps.values()), [ZAP] * 3, 'one zap per press')
 
     def test_overdrive_shot_sound(self):
         """A W4 shot writes the laser zap to pulse 2, a W1-W3 shot the
@@ -210,6 +261,7 @@ class TestTrace(unittest.TestCase):
         start_game(c, two=True)
         c.ram[WLEVEL] = 2
         c.ram[NODEATH_LO], c.ram[NODEATH_HI] = 799 & 0xFF, 799 >> 8
+        c.ram[self.sym['OD_PEND']] = c.ram[self.sym['OD_ARM']] = 1   # RC6: W4 starts now (as at a stage start)
         for i in range(3000):
             self.keep_alive(c)
             c.pads = [B if i % 4 < 2 else 0, B if (i + 1) % 4 < 2 else 0]

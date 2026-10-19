@@ -65,15 +65,19 @@ All hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every orig
 | `$E5BA` | `JSR $E627` | `JSR P1Bullets` (RTS) | original P1 bullet replaced by the shared engine |
 | `$E5DF`, `$EC59` | `INC/DEC $4F` | `INC/DEC P1_BLOCK` | a P1 who is out or shielded can't be hit |
 | `$E611`, `$EC8F` | `LDA #1 / STA $4F` | `JSR SetP1Dead` | P1 hit: also `P1_BLOCK`, `PilotDown`; keeps X/Y (`E61A` uses X) |
-| `$E833` | `JSR $E88D` | `JMP ScoreAdd` | every score: x2 for an overdrive pilot's shots (RC4), boost points, no-death points, W4, extra lives |
-| `$E913` | `JSR $F2B3` | `JSR CoopPre` | `P1_BLOCK`, bullet collisions for both pilots |
+| `$E833` | `JSR $E88D` | `JMP ScoreAdd` | every score: x2 for an overdrive pilot's shots (RC4), boost points, no-death points, overdrive READY (RC6), extra lives |
+| `$E897` | `JSR $E88D` | `RTS` | reserve-ship icons never drawn (lives are `Xn` in both modes; RC1–RC5 overwrote them every 4th frame) (RC6) |
+| `$E8B2` | `JSR $E88D` | `JSR StageFlags` | stage flags only in 1 PILOT; in co-op that HUD area is P2's (RC6) |
+| `$E913` | `JSR $F2B3` | `JSR CoopPre` | RC6: overdrive start (`OdStart`), countdown, respawn shield in every game (1P too), `P1_BLOCK`, bullet collisions for both pilots |
 | `$E91F` | `JSR $E9B1` | `JSR CoopMid` | overdrive dive boost (`DiveBoost`, RC4), firing of both pilots (after the ships moved, RC4), life sharing, P2 movement/collisions/lives |
 | `$EB9C` | `JSR $E65E` | `JSR OrientHalf` | diver tilt every other frame (CPU) |
-| `$EE4E` | `LDX $9E / LDY $9D` | `JMP AimDiver` | dives alternate between P1 and P2; overdrive: 3 of 4 at the overdrive pilot (RC4) |
+| `$EE4E` | `LDX $9E / LDY $9D` | `JMP AimDiver` | dives alternate between P1 and P2; overdrive: 3 of 4 at the overdrive pilot (RC4), +1 enemy shot per aim (`AimShots`, RC6) |
 | `$E1CF` | palette byte `$27` | `$2A` | sprite palette 2 colour 3 bright green: P1's shots (RC5; RC4 `$28` yellow) |
-| `$EE23` | `CLC / LDA $E4` | `JSR BulletAimX` | overdrive of P2 alone: enemy shots aim at P2 3 frames of 4 (RC4) |
-| `$F45F` | `LDA $ED / AND #3 / BNE` | `JMP AtkGate` | overdrive: one extra solo-attack counter step per 16 frames (+25 %) (RC4) |
-| `$F48B` | `LDA $35 / BNE` | `JSR SoloGate` | overdrive: solo attacks don't wait for the flagship window (RC4) |
+| `$EE23` | `CLC / LDA $E4` | `JSR BulletAimX` | overdrive of P2 alone: enemy shots aim at P2 7 frames of 8 (RC6; RC4 3 of 4); both in overdrive: alternate |
+| `$F45F` | `LDA $ED / AND #3 / BNE` | `JMP AtkGate` | overdrive: two extra solo-attack counter steps per 16 frames (+50 %; RC4: one) |
+| `$F10E` | `LDY $59 / CPY #1 / LDY $65` | `JSR SoloLimit` | overdrive: solo-diver slot limit one attack level higher (RC6) |
+| `$F48B` | – | (RC4–RC5 `JSR SoloGate`, removed in RC6) | original again: solo attacks wait for the flagship window |
+| `$F5A5`, `$F5DF` | `LDA $0280` | `JSR DemoBullet` | the demo pilot sees P1's slot 0 as the original bullet (`$C8` = ready): it fires again (RC6) |
 | `$FD17` | `JSR $FED4` | `JSR SoundTick` | overdrive jingle step on the triangle (RC4) |
 | `$EEC0` | `LDA $4F / BNE / JSR $EED6` | `JSR P1MoveGate` | P1 hit or out: no movement (the shield does not block it) |
 | `$F03F…$F061`, `$FC9B…$FCBA` | stars from `$02A0`, 24 | from `$02CC`, 13 | OAM for P2 and 8 bullets |
@@ -84,35 +88,38 @@ All hooks are `.patch` blocks in `src/asm/coop.asm`; the build checks every orig
 | `$FA83` | `DEC $42 / LDA #0` | `JSR P1ShipGranted` | lives HUD; P1 spawn X (co-op: left) |
 | `$FAA0` | `LDA $31` | `LDA $3C` | no "PLAYER 1" banner on co-op respawns |
 | `$FC17` | `JMP $EFFF` | `JMP P1ShipRedraw` | no P1 ship redraw while P1 is out; `FireRearm` |
-| `$FC38` | `INC $59 / SEC` | `JSR StageCleared` | weapon boosts, co-op spawn positions, once per stage |
+| `$FC38` | `INC $59 / SEC` | `JSR StageCleared` | weapon boosts (free W2 in every game, RC6), co-op spawn positions, arms the overdrive start, once per stage |
 
-## 4. Galaxian Coop – new routines (addresses of the RC4 build; see `build/Galaxian_Coop.mlb`)
+## 4. Galaxian Coop – new routines (addresses of the RC6 build; see `build/Galaxian_Coop.mlb`)
 
 | Routine | Address | What it does |
 |---|---|---|
 | `PreSplit`, `PrePilot` | `$9E00`, `$9E2F` | constant time (1171 cycles): moves shots (8.8 speed, each with the level it was fired with) and writes their sprites in the pilot's palette; tables at `$9D00` |
 | `ScrollFix` | `$9F00` | frame-start scroll; 42 cycles on both paths |
-| `CoopPre` / `BulletHits` | `$808E`, `$812F` | overdrive countdown, builds the hittable-diver list; per pilot `PilotShots` |
-| `PilotShots` | `$817F` | per shot: inline copy of `F381`'s tests (calls `F381` only for a real hit), `DiverHits`; one hit per frame |
-| `DiverHits`, `DiverHitsX` | `$829B`, `$82E7` | `F2EF`'s test against the listed divers (laser: 17-px window); `F31E` on a hit |
-| `FireShot`, `FireRearm` | `$831B`, `$8451` | one shot per new press for 1–4 slots; stores the level (`BUL_LV`); zap sound on W4 |
-| `BulletOwnerSlot`, `BulletHitDone` | `$821C`, `$8239` | shot under test → `$0280/$0283` for the original routines (sets `BY_SHOT`); afterwards P1 slot 0's sprite is put back |
-| `HudScores` | `$89C6` | `E2FE` (copy + hi score) in the two frames after points, `E342` stream every 4th frame |
-| `PilotDown`, `ResetBoost` | `$845B`, `$843B` | death / revive: W2 if unlocked else W1, W3 progress / no-death points / overdrive reset, shots removed, co-op shield 240 |
-| `ShieldTick`, `ShieldHidden`, `P1Blink`, `P1MoveGate` | `$80C8`, `$80E3`, `$80FD`, `$8119` | respawn shield countdown, blink phase, P1 blink, P1 movement gate |
-| `ScoreAdd`, `ScoreDouble`, `AfterScore` | `$8489`, `$84AC`, `$84D5` | points from `E80F`/`E821`, x2 for an overdrive pilot's shot, `E841` once, then boost + no-death points, `CheckW4`, `ExtraLifeCheck` |
-| `ExtraLifeCheck`, `AwardLife` | `$8511`, `$8590` | thousands from the score digits vs `NEXT_LIFE` (step 7); cap 9 lives |
-| `StageCleared`, `PilotAlive`, `PilotComing`, `CheckW4`, `W4Tick` | `$85B5`, `$8624`, `$8632`, `$8652`, `$868F` | W1→W2 (2000), W2→W3 (4000 from W2), co-op free W2 once for pilots in play or with a ship coming; W4 at 8000 no-death, once per life; 30-s countdown |
-| `CoopMid`, `P2Update`, `DiveBoost` | `$86B7`, `$86D3`, `$8ABE` | firing of both pilots after the ships moved; P2 state machine; overdrive dive boost |
-| `P2Alive`, `P2Waiting`, `P2Exploding`, `P2Kill` | `$8709`, `$86E2`, `$871E`, `$8739` | P2 states |
-| `P2VsBullets`, `P2VsDivers` | `$8749`, `$878A` | copies of the ship hit boxes for `P2_X` (alternate frames) |
-| `LifeShare`, `GiveFromP1`, `GiveFromP2`, `LifeShareBonus` | `$885F`, `$8880`, `$88BC`, `$88FF` | SELECT edge, transfer, +200 via `E841`+`AfterScore` (never doubled) |
-| `SfxOverdrive`, `SfxZap`, `SoundTick` | `$896E`, `$8979`, `$8994` | overdrive jingle (triangle), laser zap (pulse 2), jingle step |
-| `NmiGuard` | `$89E6` | lag frame instead of reset |
-| `AimDiver`, `OdActive`, `OdTarget`, `AtkGate`, `SoloGate`, `BulletAimX` | `$8A2B`, `$8A78`, `$8A7F`, `$8A97`, `$8AB1`, `$8B09` | dive target choice; overdrive aggression hooks |
-| `CoopPost`, `BannerUpdate`, `StatusRow`, `StatusField`, `BannerWanted` | `$8B29`, `$8B84`, `$8BEA`, `$8C53`, `$8CD6` | messages (row 1) through the idle row writer; status row 2 (stage, countdowns) through the VRAM queue |
-| `TitleBadge` | `$8E04` | `CO-OP` sprites on the settled title |
-| `CoopHud`, `HudP1Lives`, `P1TotalLives`, `P2TotalLives` | `$8E59`, `$8EB0`, `$8F2C`, `$8F45` | HUD (every 4th frame), lives = reserve + ship in play |
+| `CoopPre` / `BulletHits` | `$8091`, `$813A` | overdrive start (`OdStart`) and countdown, shield countdown (every game), builds the hittable-diver list; per pilot `PilotShots` |
+| `PilotShots` | `$818A` | per shot: inline copy of `F381`'s tests (calls `F381` only for a real hit), `DiverHits`; one hit per frame |
+| `DiverHits`, `DiverHitsX` | `$82A6`, `$82F2` | `F2EF`'s test against the listed divers (laser: 17-px window); `F31E` on a hit |
+| `FireShot`, `FireRearm` | `$832D`, `$846F` | one shot per new press for 1–4 slots; stores the level (`BUL_LV`); zap sound on W4 |
+| `BulletOwnerSlot`, `BulletHitDone` | `$8227`, `$8244` | shot under test → `$0280/$0283` for the original routines (sets `BY_SHOT`); afterwards P1 slot 0's sprite is put back |
+| `HudScores` | `$8AB6` | `E2FE` (copy + hi score) in the two frames after points, `E342` stream every 4th frame |
+| `PilotDown`, `ResetBoost` | `$8479`, `$8456` | death / revive: W2 if unlocked else W1, W3 progress / no-death points / overdrive (READY too) reset, shots removed, shield 240 in every game (RC6) |
+| `ShieldTick`, `ShieldHidden`, `P1Blink`, `P1MoveGate` | `$80D3`, `$80EE`, `$8108`, `$8124` | respawn shield countdown, blink phase, P1 blink, P1 movement gate |
+| `ScoreAdd`, `ScoreDouble`, `AfterScore` | `$84AD`, `$84D0`, `$84F9` | points from `E80F`/`E821`, x2 for an overdrive pilot's shot, `E841` once, then boost + no-death points, `CheckW4`, `ExtraLifeCheck` |
+| `ExtraLifeCheck`, `AwardLife` | `$8535`, `$85B4` | thousands from the score digits vs `NEXT_LIFE` (step 7); cap 9 lives |
+| `StageCleared`, `PilotAlive`, `PilotComing`, `CheckW4`, `W4Tick` | `$85D9`, `$8655`, `$8663`, `$8683`, `$8775` | W1→W2 (2000), W2→W3 (4000 from W2), free W2 once per game (RC6: 1P too) for pilots in play or with a ship coming, arms the overdrive start; READY at 8000 no-death on W3, once per life; 12-s countdown (RC6) |
+| `CoopMid`, `P2Update`, `DiveBoost` | `$879D`, `$87C3`, `$8BBD` | firing of both pilots after the ships moved; P2 state machine; overdrive dive boost |
+| `P2Alive`, `P2Waiting`, `P2Exploding`, `P2Kill` | `$87F9`, `$87D2`, `$880E`, `$8829` | P2 states |
+| `P2VsBullets`, `P2VsDivers` | `$8839`, `$887A` | copies of the ship hit boxes for `P2_X` (alternate frames) |
+| `LifeShare`, `GiveFromP1`, `GiveFromP2`, `LifeShareBonus` | `$8976`, `$8997`, `$89D3`, `$8A16` | SELECT edge, transfer, +200 via `E841`+`AfterScore` (never doubled) |
+| `SfxOverdrive`, `SfxZap`, `SoundTick` | `$8A5E`, `$8A69`, `$8A84` | overdrive jingle (triangle), laser zap (pulse 2), jingle step |
+| `NmiGuard` | `$8AD6` | lag frame instead of reset |
+| `AimDiver`, `AimShots`, `OdActive`, `OdTarget`, `AtkGate`, `SoloLimit`, `BulletAimX` | `$8B1B`, `$8B6A`, `$8B73`, `$8B7A`, `$8B92`, `$8BAC`, `$8C04` | dive target choice (+1 shot per aim in overdrive); overdrive aggression hooks |
+| `OdBanner`, `OdStart`, `OdAttack` | `$86AC`, `$86C4`, `$8758` | RC6: overdrive message; start of READY overdrives in the first normal-play frame of a stage; the 3-diver counter-attack |
+| `DemoBullet` | `$8326` | RC6: the demo pilot's view of the bullet (`$C8` while slot 0 is free) |
+| `CoopPost`, `BannerUpdate`, `StatusRow`, `StatusField`, `BannerWanted` | `$8C35`, `$8C81`, `$8CE7`, `$8D5A`, `$8E02` | messages (row 1) through the idle row writer; status row 2 (stage, countdowns) through the VRAM queue |
+| `TitleBadge` | `$8FAB` | `CO-OP` sprites on the settled title |
+| `HudRightClear`, `StageFlags` | `$9057`, `$9065` | RC6: new game: HUD buffer rows 3–4 cols 20–31 blank; `E8B2` skipped in co-op |
+| `CoopHud`, `HudP1Lives`, `P1TotalLives`, `P2TotalLives` | `$9000`, `$9070`, `$90EC`, `$9105` | HUD (every 4th frame), lives = reserve + ship in play |
 
 ## 5. Original attack and difficulty system (RC4 analysis)
 
@@ -227,6 +234,59 @@ hardware-driven (envelope + sweep); `FED4` meant to ramp its noise but clears `$
   have exactly P1's box (columns 2–14, rows 0–15), so the hit boxes (code, unchanged), the shot origin
   (centre column) and the OAM layout stay as in RC4. The PRG of RC5 differs from RC4 only by the
   palette byte: the CPU work is identical (tracer: 20 000 frames with identical RAM and cycle count).
+- **RC6 one rule set for both modes** (audit of every condition on `COOP` / `IsCoop`): before RC6 1 PILOT
+  differed in three places – the free W2 (`StageCleared` asked `IsCoop`), the respawn shield
+  (`PilotDown` / `CoopPre` asked `COOP`) and `STG nn` (`StageWanted`). These now ask "a game"
+  (`STATE` = 3), so the attract demo stays as it was. Everything else was already one routine for both:
+  `FireShot`/`PreSplit` (slots, speeds), `ResetBoost` (death rule), `CheckW4`/`W4Tick`/`ScoreDouble`,
+  `ExtraLifeCheck`/`AwardLife` (the original one-time ship `$3D` is 0 in both), `HudP1Lives`, the status
+  row. The remaining mode checks are the co-op exceptions: P2 (`P2Update`, `P2Draw`, PreSplit's mask,
+  `BulletHits`' pilot order), `LifeShare`, `P1OutOfLives` (game over after both), `AimDiver` /
+  `BulletAimX` (target choice), `CoopHud` (co-op layout; 1P: the original flags on the right), `StageFlags` (no flags in co-op), start positions, banner wording.
+- **RC6 1P HUD after co-op** (manual test report): the HUD buffer `$0690–$06BB` (streamed by `E342` to rows
+  3–4, cols 20–31) is written by `CoopHud` in co-op (P2's `2UP`, score, icon, `Wn`, `Xn`). Nothing cleared
+  it at a game start: the original only writes its reserve icons (`E897`, cols 21–23) and stage flags
+  (`E8B2`, cols 25–29) there, and RC1–RC5's `SoloHud` blanked cols 21–23 every 4th frame. So a 1 PILOT
+  game after a co-op game kept cols 20, 24, 30, 31 of the last co-op frame: the "U" of 2UP, a P2 score
+  digit, P2's W digit and lives digit (reproduced on RC5 and RC6 before the fix; a 1P game from power-on
+  was clean). Fix at the cause: `CoopInit` (every game start, before `FA41`) blanks those 24 buffer cells
+  (`HudRightClear`); `E897` returns at once (the icons were never wanted); `E8B2` runs only outside co-op
+  (`StageFlags`) – in co-op it had written flags (and from stage 6 digits) into P2's cells at stage starts
+  and P1 respawns until `CoopHud` overwrote them, visible when the HUD stream hit that frame. P2's RAM
+  (`$0129` score row, reset by `FCE2` at every start, `LIVES2`, `P2_STATE` 0) was already clean.
+- **RC6 attract demo**: its pilot (`F518`: `F552` dodges, `F592`/`F5DB` aim and fire) presses fire when
+  `$0280` = `$C8`, the original bullet resting on the ship. Since RC1 `$0280` is P1 slot 0's sprite,
+  which `PreSplit` sets to `$F8` (free, hidden) before the logic, so the demo never fired. `DemoBullet`
+  (at `F5A5`/`F5DF`) returns `$C8` while slot 0 is free, else its Y. In the demo P1's level is forced to
+  W1 (a demo death set it to the last game's W2 unlock, or the reset copy's `$FF` before any game).
+- **RC6 overdrive start and counter-attack**: the state machine is READY (`OD_PEND`, set by `CheckW4`)
+  → ACTIVE (`OdStart`, after `StageCleared` set `OD_ARM`: the first E913 call with FE = 8 in which the
+  new formation is fully drawn) → EXPIRED
+  (`W4Tick`) / CANCELLED (`ResetBoost`). `OdStart` runs before `W4Tick`, so the start frame is the first
+  of the 720. Attacks in the original start only in `F415` (every frame of play): every 4th frame the 8
+  counters `$5B–$62` step; one reaching `F4CC,x` asks for a solo dive (`F48F` → `F151` from the left /
+  `F173` from the right), which takes a free solo slot in `F10E` (slots 3 up to `F134`/`F13C[$65]`: 1–4
+  solo divers by attack level) and the outermost alien of a column (`F1C8`: formation bit cleared, diver
+  state 1, launch arc). `FC66` resets the counters at every stage and life start, so the first attack
+  of a stage comes after 280+ frames (measured ~275 at stages 2–5). **The formation is drawn only after
+  the stage starts**: `FC49` sets its bits `$C3–$CC`, but the nametable is empty; `EEE5` queues column
+  `$C2` (9..0, then 12 idle frames; a ring `$A0–$BF`, write index `$C0`) and `EF7E` redraws one queued
+  column per frame from the bits (read index `$C1`) – the formation's flapping animation does the
+  drawing, so it appears column by column in the first ~21 frames of play (measured: 124 of 132 cells the
+  frame before, all in the next). `OdStart` therefore collects the queued columns in `OD_COLS` and starts
+  when all 10 were queued and the ring is empty – always 21 frames after the first frame of play in the
+  measured starts (natural and forced clears). A launch from an undrawn column would show an alien
+  leaving an empty spot. `OdAttack` calls `F151`, `F173`,
+  `F151` directly in the start frame (with `$65` = 3 for the slot limit, then restored): 3 divers on
+  stages 2+, 2 on a stage 1 after the wrap; the formation is already set (`FC49` at the clear), so no
+  uninitialised object is touched. `AIM_TOGGLE` = 0 sends the next three dive aims to the overdrive
+  pilot. Not while P1 is hit (`F415` itself does nothing then).
+- **RC6 aggression profile** (all keyed on `W4_SEC`, like RC4): `SoloLimit` (one more solo diver allowed:
+  the measured dive-start rate is bound by free slots, not by attempts – RC4's extra attempts gave +46 %),
+  `AtkGate` 6 counter steps per 16 frames, `DiveBoost` +1 px for every diver at y mod 16 = 3, 8, 13
+  (deterministic +23 %; RC4's one diver per frame gave 14 % and depended on how many dived),
+  `AimShots` +1 shot per aim (the 7 enemy-shot slots stay the limit), `BulletAimX` 7 of 8 / alternate.
+  RC4's `SoloGate` (attacks during the flagship window) was removed: with `SoloLimit` it gave +87 %.
 - **RC4 firing order**: shots are fired in `CoopMid` after both ships moved, so a new shot starts where
   its ship is drawn in that frame (it used the ship position of the previous frame: 1–2 px behind a
   moving ship, for both pilots).
@@ -270,7 +330,7 @@ hardware-driven (envelope + sweep); `FED4` meant to ramp its noise but clears `$
   free W2 before and kept it after the respawn; RC2–RC3 required `PilotAlive`. RC4 (user decision, with W2
   now kept after a death): the free W2 needs `PilotComing` (in play, or hit with a reserve ship); point
   boosts still need `PilotAlive`.
-- **Respawn shield (co-op)**: `PilotDown` sets 240 frames; `ShieldTick` (from `CoopPre`, once per
+- **Respawn shield (co-op; RC6: every game, 1P too, not the demo)**: `PilotDown` sets 240 frames; `ShieldTick` (from `CoopPre`, once per
   game-logic frame) counts only while the ship is in play, so the 4 s start when the ship is back. P1:
   the shield is ORed into `P1_BLOCK`, which only the two hit checks read; P2: `P2Alive` skips both
   collision routines. Blinking: P2's sprites are hidden in `P2Draw`; P1 is background, so `P1Blink`

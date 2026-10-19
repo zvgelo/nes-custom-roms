@@ -8,7 +8,7 @@ the original are kept; the mod adds a second ship, a shared progression system a
 
 Two modes on the title screen:
 
-- **1 PILOT** – the original single-player game, with the new lives display, weapon boosts and extra lives.
+- **1 PILOT** – one ship, with exactly the same rules as each pilot of the co-op game (RC6).
 - **2 PILOTS CO-OP** – two ships, two controllers, separate scores and lives, plus life sharing.
 
 Status: **in testing** (branch `game/galaxian-coop`, not merged into `main` yet). Everything below is
@@ -17,55 +17,66 @@ implemented and covered by the automatic emulator tests; play tests on real setu
 
 ## Features
 
-- **Simultaneous co-op**: P1 (controller 1) keeps the original ship, P2 (controller 2) flies its own
-  orange-blue ship (RC5: delta nose with a white cockpit, flat-topped pods and split tail fins; same size,
-  same hit boxes). Both move and shoot independently and can pass through each other.
-- **Independent shooting and scoring**: every bullet belongs to its pilot; points go to the owner.
-  Enemy bullets and diving enemies can hit either ship; collisions are checked per ship. **P1's shots are
-  bright green, P2's orange** on every weapon level (also P1 in 1 PILOT).
-- **Lives**: each pilot starts with 3. The HUD shows one ship icon and the number of lives left
-  **including the ship in play** (`X3`, `X2`, `X1`, `X0`) – in both modes.
-- **Game Over** only when both pilots are out; a pilot left alone keeps playing. In co-op the ships start
-  side by side (P1 left, P2 right).
-- **Life sharing (co-op)**: when one pilot is out (`X0`) and the other has at least `X2`, the other pilot
-  presses **SELECT** to give one ship: the donor gets −1 life and +200 points, the receiver comes back with
-  1 life. A message on the top of the screen says who can press SELECT.
-- **Weapon boosts (both modes, per pilot)**:
+### Rules shared by both modes (RC6: one set of rules for 1 PILOT and every co-op pilot)
 
-  | Level | Shots at once | Shot speed (px/frame) | How to get it |
-  |---|---|---|---|
-  | W1 | 1 | 4.00 (100 %) | start; after a death as long as W2 was never unlocked |
-  | W2 | 2 | 4.40 (110 %) | 2000 boost points, then clear a stage; in co-op also free once, for clearing the first stage |
-  | W3 | 3 | 4.80 (120 %) | 4000 more boost points **counted from when W2 was given**, then clear a stage |
-  | W4 – Red Laser Overdrive | 4 | 6.40 (160 %) | on W3, 8000 points scored without dying: at once, for **30 seconds** |
+| Mechanic | Rule |
+|---|---|
+| Start | `X3` (lives including the ship in play), `W1` |
+| Firing | one new press of FIRE = one shot, while the pilot has a free shot (1–4 by weapon level); a held button never fires again; P1's shots bright green, P2's orange |
+| W1 | 1 shot, 4.00 px/frame (100 %); at the start, and after a death while W2 was never unlocked |
+| W2 | 2 shots, 4.40 px/frame (110 %); **free once per game for the first cleared stage 1** (also for a pilot exploding or waiting for its next ship; not for one hit on its last ship); otherwise 2000 boost points + a cleared stage |
+| W3 | 3 shots, 4.80 px/frame (120 %); 4000 more boost points **counted from when W2 was given** + a cleared stage |
+| W4 – Red Laser Overdrive | 4 lasers, 6.40 px/frame (160 %); see below |
+| Death | back on W2 if W2 was ever unlocked, else W1; W3 progress, no-death points, a READY or running overdrive cancelled, shots removed; score, extra-life thresholds and the W2 unlock kept |
+| Respawn shield | 4 s (240 frames) after every respawn: bullets and divers pass, the ship blinks (fast in the last second), moves and fires; none at a new game or a stage change without a death |
+| Extra life | every 7000 points (7000, 14000, 21000 …), immediately, at most 9; doubled points count; the original one-time extra ship is off |
+| Points | x2 for the pilot's own kills while its W4 runs (also towards extra lives and the hi score) |
+| HUD | `Xn`, `Wn`, score, hi score; row above: `STG nn` (centre) and the pilot's overdrive field `W4 RDY` / `W4 12s` … `W4 01s` |
 
-  Measured full flights from the ship to the top: 50 / 46 / 42 / 32 frames. Boost points and no-death
-  points are separate from the score shown in the HUD. At most one level per cleared stage; the free W2 in
-  co-op goes to every pilot still in the game at the moment the stage is cleared, also one exploding or
-  waiting for its next ship (it comes back with W2); a pilot hit on its last ship or already out gets none. Points above a threshold are not carried over to the next one.
+Measured full shot flights from the ship to the top: 50 / 46 / 42 / 32 frames. Boost points and no-death
+points are separate from the score shown in the HUD. At most one level per cleared stage; points above a
+threshold are not carried over.
 
-  **Once W2 is unlocked it is kept**: a death (or a revive by SELECT) brings the pilot back on W2 (W1 if W2
-  was never unlocked), with W3 progress, no-death points and overdrive reset and their shots removed; the
-  score, the extra-life thresholds and the other pilot's weapon are not touched.
+**Red Laser Overdrive (RC6)**:
 
-  **Red Laser Overdrive (W4)**: a rising jingle, the "GREAT SHOT" message and a countdown `W4 30s` above
-  the pilot's HUD; 4 lasers (green for P1, orange for P2) with their own zap sound; **x2 points** for
-  the pilot's own kills; the enemies get more aggressive (about +25 % attacks, dives ~14 % faster, and
-  dives and enemy shots go for the pilot in overdrive more often). It lasts 30 s of play (pause and the
-  stage change don't count), once per life; then W3 again, x1 points, normal enemies. Lasers already
-  flying finish their flight. Damage is unchanged; the respawn shield still works.
-- **Respawn shield (co-op)**: after every respawn and after a revive by SELECT the ship is invulnerable for
-  4 seconds (240 frames) and blinks – slowly for 3 s, fast in the last second. It can move and fire as
-  usual; points count normally. The other pilot keeps its own state. Not in 1 PILOT.
-- **Extra life every 7000 points** (7000, 14000, 21000, …) for each pilot, given immediately; the life-sharing
-  bonus counts too. Lives are capped at 9 (one HUD digit).
-- **HUD**: `1UP` / `2UP` scores, hi-score (P2 can beat it too), lives `Xn`, weapon level `Wn` per pilot;
-  above them (co-op) the stage number `STG 01` and, while it runs, each pilot's overdrive countdown
-  `W4 30s` … `W4 01s` (P1 left, P2 right). Messages use the line above.
+1. **READY** – on W3, 8000 points scored without dying (once per life): the overdrive is *ready*, not
+   started. The pilot stays on W3 (x1 points, normal enemies, no countdown); `OVERDRIVE READY NEXT STAGE`
+   (1P) / `P1 W4 READY NEXT STAGE` (co-op) for 2 s on the message line, `W4 RDY` above the pilot's HUD
+   until the start.
+2. **ACTIVE** – at the start of the next stage, in the first frame its formation is on screen (the game
+   draws a new formation column by column in its first ~0.35 s of play): W4 for **12 seconds** (720 frames of play;
+   pause and stage changes don't count), x2 points, the rising jingle, `OVERDRIVE!` (`P1 OVERDRIVE!` …)
+   and the countdown `W4 12s`. In that same frame **three aliens break from the formation** and attack
+   (their dives go for the overdrive pilot), and the enemies stay aggressive for the whole 12 s: about
+   +60–80 % dive starts (one more solo diver allowed at a time), dives ~23 % faster, 3 of 4 dive targets
+   on the overdrive pilot, one more shot per dive (the game's limit of 7 enemy shots stays).
+3. **EXPIRED** – after 12 s: W3, x1, normal enemies (dives already flying finish normally; lasers in
+   flight too). **CANCELLED** – a death before or during it; a revive by SELECT doesn't bring it back; a
+   new game clears it.
+
+### Co-op only
+
+- **P2's ship**: controller 2, an orange-blue ship of its own shape (delta nose with a white cockpit,
+  flat-topped pods and split tail fins; same size and hit boxes). The ships start side by side (P1 left,
+  P2 right) and can pass through each other.
+- **Separate lives and scores**; every bullet belongs to its pilot; enemy bullets and divers hit either
+  ship. **Game Over** only when both pilots are out; a pilot left alone keeps playing.
+- **Life sharing**: when one pilot is out (`X0`) and the other has at least `X2`, the other presses
+  **SELECT** to give one ship: donor −1 life and +200 points (never doubled), receiver back with 1 life
+  and a shield. A message on the top line says who can press SELECT.
+- **Targets**: dives alternate between the two pilots; with one pilot in overdrive 3 of 4 dives and most
+  enemy shots go for that pilot (P2: 7 of 8; P1: all, as the original aims at P1); with both in overdrive they are split between them (the aggression is
+  the same as with one: two overdrives don't add up).
+- **HUD**: `2UP` score, P2's `Xn`/`Wn` on the right, its overdrive field above `2UP`; the original stage
+  flags don't fit (1 PILOT keeps them next to `STG nn`).
+
+### Other
+
 - **Title screen**: `1 PILOT` / `2 PILOTS CO-OP`, an animated `CO-OP` badge on the logo and the credit
   `HACK BY ZVGELO ©2026` below Namco's original credits.
 - **Fixes of original glitches**: the row of white dashes on the top line and the `0` in the top-left corner
-  (both present in the original ROM) are gone.
+  (both present in the original ROM) are gone. RC6: the attract demo fires again (RC1–RC5's bullet engine
+  had stopped it).
 
 ## Required original ROM
 
@@ -114,8 +125,8 @@ What `src/build.py` does:
    except for small **hooks** (`.patch` blocks in `coop.asm`, e.g. `JSR` into the new code). For each hook
    the build checks that the original bytes are exactly what the source says before replacing them;
 4. changes CHR: the two P2 ship tiles (P2's own ship, `P2_PIXELS`; checked: symmetric, same box as
-   P1's), the laser tile, an `s` glyph for the countdown, and two blank logo cells moved to another blank
-   tile; one palette byte (sprite palette 2, colour 3: green `$2A`);
+   P1's), the laser tile, an `s` glyph for the countdown, a `!` glyph for `OVERDRIVE!`, and two blank logo
+   cells moved to another blank tile; one palette byte (sprite palette 2, colour 3: green `$2A`);
 5. checks the new RAM variables for overlaps, against the zero page the original uses and against
    `src/original_ram.txt` (RAM the original uses at run time, traced); checks that the cycle-counted
    routine and its tables each stay in one page and that no code blocks overlap;
@@ -186,10 +197,13 @@ The game draws everything inside the visible area; no overscan setting is needed
   accent would change the HUD or need another palette for the ship rows (whose colour 2 is blue, not
   white). The ships are told apart by P2's silhouette and the shot colours.
 - When P1 loses a ship, new attack waves pause until P1 is back (original behaviour); P2's deaths do not
-  pause the game. In 1 PILOT there is no invulnerability after a respawn (as in the original).
-- The stage flags of the original HUD are not shown in co-op (no room; `STG nn` instead); 1 PILOT keeps
-  them and shows no `STG` counter.
-- Messages are red (the HUD palette has no yellow); `!` is not in the font.
+  pause the game. The overdrive's opening attack is skipped if P1 is hit at that very moment.
+- The stage flags of the original HUD are not shown in co-op (no room; `STG nn` instead); 1 PILOT shows
+  both (they always agree).
+- Messages are red (the HUD palette has no yellow). The `W4 RDY` / `NEXT STAGE` wording is short because
+  each HUD field has 6 cells and the message line 26.
+- The overdrive's opening attack uses the game's own dives: the aliens fly their normal launch arc
+  (~0.8 s) before they turn down at the pilot.
 - Stars: 13 instead of 24 (sprites were needed for P2 and the bullets).
 
 ## Troubleshooting

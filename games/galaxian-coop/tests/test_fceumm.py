@@ -329,5 +329,158 @@ class TestFceumm(unittest.TestCase):
         self.ghost_free_absence(1)
 
 
+    def next_stage(self, e):
+        """Clear the stage; stop right before F0, the first frame of the next
+        stage with its formation drawn (the frame the game clears OD_ARM)."""
+        stage = e[0x59]
+        for k in range(10):
+            e[0xC3 + k] = 0
+        for _ in range(900):
+            e[LIVES1] = e[LIVES2] = 5
+            for k in range(8):
+                e[0x738 + k] = 0
+            e.step()
+            if e[0x59] != stage and e[SUBSTATE] == 8:
+                break
+        for _ in range(60):
+            st = e.em.get_state()
+            e.step()
+            if not e[SYM['OD_ARM']]:
+                e.em.set_state(st)
+                e.data.update_ram()
+                return
+        self.fail('no F0')
+
+    def test_overdrive_starts_with_next_stage(self):
+        """RC6: READY (W3 + 8000 no-death points by a real kill) keeps W3;
+        F0 of the next stage: W4 for 12 s and 3 aliens leave the formation
+        (diver state 1); F1-F3 they move."""
+        e = self.e
+        e[WLEVEL] = 2
+        e[SYM['NODEATH_LO']], e[SYM['NODEATH_HI']] = 799 & 0xFF, 799 >> 8
+        e[SHIP_X] = 0xE0
+        for i in range(1500):
+            e.calm()
+            e.step(('B',) if i % 4 < 2 else ())
+            if e[SYM['OD_PEND']]:
+                break
+        self.assertEqual((e[WLEVEL], e[SYM['OD_PEND']], e[SYM['W4_SEC']]), (2, 1, 0), 'READY, still W3')
+        self.next_stage(e)
+        self.assertEqual([e[0x738 + k] for k in range(8)], [0] * 8)
+        e.step()
+        self.assertEqual((e[WLEVEL], e[SYM['W4_SEC']], e[SYM['W4_FRM']]), (3, 12, 59))
+        launched = [k for k in range(7) if e[0x738 + k] == 1]
+        self.assertEqual(len(launched), 3)
+        pos = {k: (e[0x200 + 16 * k], e[0x203 + 16 * k]) for k in launched}
+        for f in range(3):
+            e.step()
+            for k in launched:
+                now = (e[0x200 + 16 * k], e[0x203 + 16 * k])
+                self.assertNotEqual(now, pos[k], f'F{f + 1} diver {k}')
+                pos[k] = now
+
+    def test_single_player_rules(self):
+        """RC6 in 1 PILOT: the free W2 for stage 1 and the 4-s shield."""
+        self.e.close()
+        e = self.e = Emu(self.rom)
+        e.step(frames=150)
+        for _ in range(60):
+            if e[STATE] == 3:
+                break
+            e.step(('START',), frames=6)
+            e.step(frames=6)
+        for _ in range(1200):
+            if e[STATE] == 3 and e[SUBSTATE] == 8 and e[P1_DEAD] == 0:
+                break
+            e.step()
+        self.assertEqual(e[COOP], 0)
+        self.next_stage(e)
+        e.step()
+        self.assertEqual((e[WLEVEL], e[SYM['W2_OWNED']]), (1, 1), 'free W2 in 1P')
+        for _ in range(130):
+            e.calm()
+            e.step(('LEFT',))
+        x = e[SHIP_X]
+        e[0x284], e[0x287] = 0xC4, (x + 0x7C) & 0xFF
+        for _ in range(12):
+            e.step()
+            if not e.alive(0):
+                break
+        self.assertFalse(e.alive(0))
+        self.assertEqual(e[SHIELD], 240)
+        for _ in range(900):
+            e.calm()
+            e.step()
+            if e.alive(0) and e[SUBSTATE] == 8:
+                break
+        self.assertEqual(e[WLEVEL], 1, 'back on W2')
+        self.assertGreater(e[SHIELD], 200)
+        for _ in range(5):
+            x = e[SHIP_X]
+            e[0x284], e[0x287] = 0xC4, (x + 0x7C) & 0xFF
+            e.step(frames=6)
+            self.assertTrue(e.alive(0), 'shield holds')
+
+
+    def test_mode_switch_hud(self):
+        """RC6, manual test report: a co-op game (P2 scores) to GAME OVER, then 1
+        PILOT without restarting the core: the cells where co-op shows P2's
+        fields (rows 3-4, cols 20-24 and 30-31) are blank in the picture in
+        most frames (a star may cross a cell); the stage flag (col 25) is
+        drawn. RC1-RC5 kept the "U" of 2UP, a score digit and P2's W and X
+        digits there."""
+        e = self.e
+        for i in range(600):
+            e[LIVES1] = e[LIVES2] = 3
+            e.step(('B',) if i % 6 < 2 else (), ('B',) if i % 6 < 3 else ())
+        for _ in range(60 * 60):                           # game over
+            if e[STATE] != 3:
+                break
+            e[LIVES1] = e[LIVES2] = 0
+            e[SHIELD] = e[SHIELD + 1] = 0
+            for pilot, k in ((0, 0), (1, 1)):
+                if e.alive(pilot) and not e[0x284 + 4 * k]:
+                    x = e[SHIP_X] if pilot == 0 else e[P2_X]
+                    e[0x284 + 4 * k], e[0x287 + 4 * k] = 0xC4, (x + 0x7C) & 0xFF
+            e.step()
+        for _ in range(60 * 60):
+            if e[STATE] == 1:
+                break
+            e.step()
+        self.assertEqual(e[STATE], 1, 'title')
+        e.step(frames=60)
+        for _ in range(40):
+            if not e[0x31] & 1:
+                break
+            e.step(('SELECT',), frames=6)
+            e.step(frames=6)
+        for _ in range(60):
+            if e[STATE] == 3:
+                break
+            e.step(('START',), frames=6)
+            e.step(frames=6)
+        for _ in range(1200):
+            if e[STATE] == 3 and e[SUBSTATE] == 8 and e[P1_DEAD] == 0:
+                break
+            e.step()
+        self.assertEqual(e[COOP], 0, '1 PILOT')
+        lit = {}
+        frames = 40
+        for _ in range(frames):
+            e.calm()
+            e.step()
+            img = e.em.get_screen()                        # 224 x 240: 8 px cropped top/bottom... per side
+            for row in (3, 4):
+                for col in (20, 21, 22, 23, 24, 25, 30, 31):
+                    y, x = 8 * row + 1 - 8, 8 * col - 8
+                    cell = img[y:y + 8, x:x + 8]
+                    lit[(row, col)] = lit.get((row, col), 0) + int(cell.any())
+        for (row, col), n in lit.items():
+            if col == 25:
+                self.assertEqual(n, frames, 'stage flag drawn')
+            else:
+                self.assertLess(n, frames // 2, f'row {row} col {col}: something drawn in {n} of {frames} frames')
+
+
 if __name__ == '__main__':
     unittest.main()

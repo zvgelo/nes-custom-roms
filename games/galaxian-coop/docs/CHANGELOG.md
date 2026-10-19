@@ -3,6 +3,76 @@
 Output of each version: `build/Galaxian_Coop.nes` from `Galaxian (Japan).nes`
 (SHA-256 `1188cedf…3613e`). Earlier versions can be rebuilt from their git commit.
 
+## 2026-10-19 – RC6: one rule set for 1 PILOT and co-op, overdrive READY → next stage (branch `game/galaxian-coop`)
+
+Result: SHA-256 `7e5d4fd1ee57fd0dba4901a37002b024bee4f8987bf471b8d7341b9c0ea232ca`, `patches/Galaxian_Coop.bps` (5213 bytes). Not yet tested manually.
+
+### Changed – 1 PILOT = a co-op pilot
+- **Free W2 for the first cleared stage 1 in 1 PILOT too** (was co-op only), with the same rule: also for
+  a pilot exploding or waiting for its next ship, not for one hit on its last ship; once per game; a new
+  game resets it. Not in the attract demo.
+- **Respawn shield in 1 PILOT** (4 s, blinking, moves and fires; the same routine as co-op's P1). Not in
+  the demo, not at a new game or a stage change without a death.
+- **`STG nn` in 1 PILOT** (same routine and field as co-op). The original stage flags (rows 3–4, right)
+  stay: they come from the same stage number and always agree.
+- Audit of every mode-dependent condition: the remaining ones are the co-op exceptions (second ship and
+  pad, separate lives/scores, life sharing, game over after both, target choice, HUD layout, start
+  positions). Weapon levels, death rule, overdrive, x2, extra lives and the HUD fields were already shared.
+
+### Changed – Red Laser Overdrive
+- **W3 + 8000 no-death points now make the overdrive READY**, not active: the pilot stays on W3 (x1, no
+  aggression, no countdown); `OVERDRIVE READY NEXT STAGE` (1P) / `P1 W4 READY NEXT STAGE` (co-op) for 2 s,
+  `W4 RDY` in the pilot's HUD field.
+- **It starts with the next stage, in the first frame its formation is on screen** (the game draws a new
+  formation column by column during its first 21 frames of play): W4, **12 s** (720 frames; was 30 s), x2,
+  jingle, `OVERDRIVE!` / `P1 OVERDRIVE!` / `P1 P2 OVERDRIVE!` (replaces `GREAT SHOT`), `W4 12s`.
+- **Counter-attack in that same frame**: 3 aliens leave the formation through the game's own solo-dive
+  routine (no wait for the attack timer, ~4–5 s at a stage start); their dives go for the overdrive pilot.
+  Never from columns not drawn yet: an earlier version started in the stage's very first frame of play,
+  when the screen showed no formation yet (only its bits were set) – found on a screenshot and changed.
+- **Stronger aggression for the 12 s** (all keyed on the running countdown, nothing left afterwards):
+  one more solo diver allowed at a time (`SoloLimit`, attack level +1, at most the game's top), attack
+  counters 6 steps per 16 frames (RC4: 5), dives ~23 % faster (every diver +1 px at y mod 16 = 3, 8, 13;
+  RC4: ~14 %), +1 enemy shot per dive aim, enemy shots at P2 7 of 8 (RC4: 3 of 4), both pilots in
+  overdrive: shots alternate. RC4's "solo attacks during the flagship window" is dropped (too strong
+  together with the slot limit).
+- Cancelled by a death (also while READY), not given back by a revive; a stage-number wrap can't start
+  it twice.
+
+### Fixed
+- **1 PILOT after a co-op game showed P2 leftovers on the right of the HUD** (manual test report; reproduced
+  on RC5 and RC6): the "U" of `2UP`, a P2 score digit, P2's `W` and lives digits (rows 3–4, cols 24 and
+  30) stayed from the last co-op frame, because nothing cleared that part of the HUD buffer at a game
+  start. Every game start now blanks it (`HudRightClear`); the original reserve-ship icons (`E897`) are
+  no longer drawn at all (they were overwritten every 4th frame before); in co-op the original stage
+  flags (`E8B2`) are not written into P2's cells any more (they could flash there at a stage start or a
+  P1 respawn). 1P keeps the original flags (cols 25–29; from stage 6 one flag and the stage number).
+- **No stage counter in 1 PILOT** (manual test report): `STG nn` now in both modes (see Changed).
+- **The attract demo never fired since RC1**: its pilot fires when `$0280` = `$C8` (bullet resting on the
+  ship); the shared bullet engine hides P1's slot 0 sprite there before the logic runs. `DemoBullet`
+  gives the demo the original view; the demo always uses W1 (it used the last game's W2 unlock after a
+  death in the demo).
+
+### Measurements (cynes, details in TESTING.md)
+- 12-s windows at stage starts 2–5 (8 sessions per mode): dive starts 3.25 normal / 4.0 RC4 profile /
+  **5.75 RC6** (+77 % vs normal), first attack at frame ~275 / ~220 / **20** (frames from the stage's first frame of play; RC6: F0, the
+  formation's last column drawn), enemy shots 6.5 / 11.1 / 17.2,
+  dive speed 1.00 / 1.14 / 1.23.
+- CPU: 0 resets, 0 lag frames in all stress runs; worst frames 100 (both W4), 44 (both W4 + shields),
+  168 / 83 (1P W4 / + shield); the previous ROM in the same runs: 83 / 37. Activation frames ≥ 225.
+
+### Tests
+- New: 1P/co-op parity (start, free W2, thresholds, overdrive, aggression, death, extra lives, stage
+  counter, HUD in pause and game over, no P2 in 1P, shots), demo, shield in 1P; overdrive READY, frame-exact
+  counter-attack, both pilots, cancel cases, READY on the last kill, once per start, READY HUD; tracer:
+  jingle at the start frame, 1P sounds; FCEUmm: overdrive start and 1P rules.
+- Updated (rules changed): `test_boost_thresholds`, `test_stage_counter`, `test_shield_blinking`,
+  `test_shield_blink_silhouettes`, `test_no_shield_at_game_or_stage_start`,
+  `test_shield_blocks_diver_collisions`, `test_double_score_extra_life_and_hi_score` (both modes);
+  `test_single_player_has_no_shield` → `test_shield_single_player`; `test_w4_red_laser`,
+  `test_overdrive_lasts_30_seconds` → `…_12_seconds`, `test_overdrive_independent_pilots`,
+  `test_overdrive_aggression`, `test_hud_in_overdrive`, the tracer jingle test.
+
 ## 2026-10-18 – RC5: player visual identity (branch `game/galaxian-coop`)
 
 Result: SHA-256 `d83b98968846b24a91d17a8564df82e5c354909b3806b5a932f28dee2f6c0c03`, `patches/Galaxian_Coop.bps` (4735 bytes). After the RC4 tests on the

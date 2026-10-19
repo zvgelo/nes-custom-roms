@@ -25,7 +25,8 @@ CHR changes in Galaxian Coop (all checked by `build.py` before writing):
 | sprite `$E1`, `$EA` (were blank logo cells) | P2 ship, left half top / bottom (drawn twice, the second copy flipped). RC5: P2's own ship (`build.P2_PIXELS`: delta nose, flat-topped pods, split fins); RC1–RC4: a copy of P1's ship |
 | CHR `$155F`, `$1568` (logo string data) | the two logo cells point to blank tile `$10` instead – identical picture |
 | sprite `$60` (never displayed by the original) | W4 laser: one colour (3), 3 px wide, centre column 4 like the bullet `$30`; P1 palette 2 (green, RC4 yellow), P2 palette 0 (orange). RC1–RC3: red/orange two-tone, centre column 3 (1 px left) |
-| background `$1000` tile `$36` (a one-dot tile no nametable uses: traced title, demo, games, game over, end screen) | lower-case `s` of the overdrive countdown (`W4 30s`), colour 1 like the letters |
+| background `$1000` tile `$36` (a one-dot tile no nametable uses: traced title, demo, games, game over, end screen) | lower-case `s` of the overdrive countdown (`W4 12s`), colour 1 like the letters |
+| background `$1000` tile `$34` (a one-dot tile no nametable of the original uses: traced title, demo, 1P and 2P games) | `!` of `OVERDRIVE!` (RC6), colour 1 |
 
 Palette: the reset code loads all 32 palette bytes once from `$E1B4` (`E16B`). Sprite palettes:
 `0F 30 11 27` / `0F 16 11 27` / `0F 23 11 27` / `0F 1A 11 27`; colour 3 is orange `$27` in all four
@@ -142,7 +143,7 @@ of CHR data looked empty and `$0156–$01FF` looked free (it holds three tunes).
 | `$22` | `TITLE_STEP` | extra title rows written (0–3) |
 | `$23–$24` | – | the original's (microphone check), not used |
 | `$25` | `P1_GRANTED` | P1 dead, next ship already taken from `$42` |
-| `$26` | `STAGE1_DONE` | co-op: free W2 for the first stage already given |
+| `$26` | `STAGE1_DONE` | free W2 for the first stage already given (RC6: 1P and co-op) |
 
 ### Other zero page and `$06xx`
 
@@ -153,8 +154,8 @@ of CHR data looked empty and `$0156–$01FF` looked free (it holds three tunes).
 | `$4B` | `DCOUNT` | divers in `DLIST` this frame |
 | `$4D` | `BANNER_CUR` | message shown on HUD row 1 |
 | `$52` | `BANNER_ROW` | banner rows still to write (2 only at a game start: row 2 blanked too) |
-| `$69` | `W4_TIMER` | frames left for the W4 message |
-| `$6A` | `W4_WHO` | bit 0 P1, bit 1 P2 reached W4 |
+| `$69` | `W4_TIMER` | frames left for the overdrive message (`OD_MSG`) |
+| `$6A` | `W4_WHO` | pilots the message names: bit 0 P1, bit 1 P2 |
 | `$7A–$7B` / `$7C–$7D` | `BOOST_LO/HI` | boost points P1, P2, units of 10 |
 | `$D9` | `DI` | loop index / temporary |
 | `$E6–$E7` / `$F8–$F9` | `NEXT_LIFE_LO/HI` | next extra-life threshold in thousands (7, 14, …) |
@@ -166,15 +167,20 @@ of CHR data looked empty and `$0156–$01FF` looked free (it holds three tunes).
 | `$0688–$068E` | `DLIST` | OAM offsets of the divers that can be hit this frame |
 | `$0350` | `AIM_TOGGLE` | dives alternate between the pilots (RC3: `$011D`) |
 | `$0351` | `P1_REDRAW` | P1 revived: background ship still to draw (RC3: `$011E`) |
-| `$0352–$0353` | `SHIELD` | respawn shield frames left P1, P2 (co-op; 240 = 4 s) (RC2/RC3: `$0126`) |
+| `$0352–$0353` | `SHIELD` | respawn shield frames left P1, P2 (240 = 4 s; RC6: 1P too) (RC2/RC3: `$0126`) |
 | `$0354` | `SCORE_NEW` | frames in which `E2FE` still copies the scores (RC3: `$0128`) |
 | `$0355–$0356` | `W2_OWNED` | pilot unlocked W2 in this game: a death or revive gives W2, not W1 |
 | `$0357–$0358` | `W4_USED` | overdrive already used in this life |
-| `$0359–$035A` / `$035B–$035C` | `W4_SEC` / `W4_FRM` | overdrive seconds left (30..1, 0 = off) / frames left in the second (60..1) |
+| `$0359–$035A` / `$035B–$035C` | `W4_SEC` / `W4_FRM` | overdrive seconds left (RC6: 12..1, RC4–RC5: 30..1; 0 = off) / frames left in the second (60..1) |
 | `$035D–$0364` | `BUL_LV` | weapon level each shot was fired with (speed and look for its whole flight) |
 | `$0365` / `$0366–$0367` | `STG_SHOWN` / `TMR_SHOWN` | value shown in the HUD status row fields (`$FE` blank, `$FF` unknown) |
 | `$0368` | `BY_SHOT` | 1 while a shot's hit is scored (x2 only for shots) |
-| `$0369–$036F` / `$0370` | `DIVE_CELL` / `DIVE_RR` | overdrive dive boost: 8-px cell of each diver's y last boosted / slot handled this frame |
+| `$0369–$0370` | – | free since RC6 (RC4–RC5: `DIVE_CELL` / `DIVE_RR` of the dive boost) |
+| `$0371–$0372` | `OD_PEND` | overdrive READY (W3 + 8000 no-death points), starts with the next stage (RC6) |
+| `$0373` | `OD_ARM` | a stage was cleared: READY overdrives start in the next normal-play frame (RC6) |
+| `$0374` | `OD_MSG` | overdrive message on row 1: 1 READY, 2 started (RC6) |
+| `$0375` | `OD_NOW` | an overdrive just started: status row due at once (RC6) |
+| `$0376–$0377` | `OD_COLS` | formation columns 0–9 queued for drawing since the stage started (bit per column): the overdrive starts once all are drawn (RC6) |
 | `$067A–$067B` | `LASTK` | thousands digit at the last extra-life check |
 | `$067C` | `LAG_COUNT` | overlapped NMIs in a row |
 | `$067D` | `PS_MASK2` | PreSplit: P2 visibility mask |

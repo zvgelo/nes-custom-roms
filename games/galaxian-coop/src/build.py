@@ -84,6 +84,20 @@ SECONDS_PIXELS = ['........',
                   '.....11.',
                   '.11111..']
 
+# "!" for the "OVERDRIVE!" message (RC6, HUD row 1): background tile $34 of
+# table $1000 (a one-dot tile), unused by every nametable of the original
+# (traced runs of title, demo, 1P and 2P games); colour 1 like the font.
+EXCL_TILE = 0x34
+EXCL_ORIG = bytes.fromhex('00 00 00 00 00 00 00 00 00 00 00 00 08 00 00 00')
+EXCL_PIXELS = ['...11...',
+               '...11...',
+               '...11...',
+               '...11...',
+               '...11...',
+               '........',
+               '...11...',
+               '........']
+
 
 def tile_pixels(chr_data, table, idx):
     b = chr_data[table * 0x1000 + idx * 16:][:16]
@@ -130,6 +144,9 @@ def patch_chr(chr_data):
     off = 0x1000 + SECONDS_TILE * 16
     assert chr_data[off:off + 16] == SECONDS_ORIG, 'BG tile $36 is not the expected original'
     chr_data[off:off + 16] = encode_tile([['.123'.index(c) for c in row] for row in SECONDS_PIXELS])
+    off = 0x1000 + EXCL_TILE * 16
+    assert chr_data[off:off + 16] == EXCL_ORIG, 'BG tile $34 is not the expected original'
+    chr_data[off:off + 16] = encode_tile([['.123'.index(c) for c in row] for row in EXCL_PIXELS])
     top, bot = build_p2_tiles(chr_data)
     for tile, data in zip(P2_TILES, (top, bot)):
         off = tile * 16
@@ -162,7 +179,9 @@ RAM_SIZES = {'COOP': 1, 'P1_OUT': 1, 'P1_BLOCK': 1, 'P2_STATE': 1, 'P2_X': 1, 'P
              'BOOST_HI': 2, 'DI': 1, 'NEXT_LIFE_LO': 2, 'NEXT_LIFE_HI': 2, 'BUL_F': 8, 'DLIST': 7,
              'HIT_DONE': 1, 'SHOT_N': 1, 'LOGIC_RAN': 1, 'LASTK': 2, 'LAG_COUNT': 1, 'SHIELD': 2, 'SCORE_NEW': 1,
              'PS_MASK2': 1, 'LAG_TOTAL': 1, 'OD_SND': 1, 'W2_OWNED': 2, 'W4_USED': 2, 'W4_SEC': 2,
-             'W4_FRM': 2, 'BUL_LV': 8, 'STG_SHOWN': 1, 'TMR_SHOWN': 2, 'BY_SHOT': 1, 'DIVE_CELL': 7, 'DIVE_RR': 1}
+             'W4_FRM': 2, 'BUL_LV': 8, 'STG_SHOWN': 1, 'TMR_SHOWN': 2, 'BY_SHOT': 1,
+             'OD_PEND': 2, 'OD_ARM': 1, 'OD_MSG': 1, 'OD_NOW': 1,
+             'OD_COLS': 2}
 
 
 # Zero-page addresses the original program reads or writes directly (from the

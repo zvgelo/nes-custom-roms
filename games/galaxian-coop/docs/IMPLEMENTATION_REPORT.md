@@ -1,13 +1,176 @@
-# Galaxian Coop – raport z implementacji (RC5)
+# Galaxian Coop – raport z implementacji (RC6)
 
-Data: 2026-10-18. Branch: `game/galaxian-coop` (bez merge do `main`, bez remote, bez push).
-Wersja: **RC5** – tożsamość wizualna pilotów: zielone pociski P1, własna sylwetka statku P2.
-RC4: naprawa HUD wyniku, Red Laser Overdrive (W4 na 30 s, ×2, dźwięki, agresja wrogów),
-trwałe W2, W3 za 4000, kolory pocisków P1/P2, wyśrodkowane lasery, licznik etapu i odliczanie W4.
-Sekcja R5 opisuje RC5, R4 – RC4, R3 – RC3, sekcja 0 – RC2, sekcje 1–9 – RC1. Starsze sekcje są aktualne poza
-miejscami poprawionymi w nowszych (np. W3 za 5000 i W4 na stałe – zmienione w RC4).
-Autor moda: Zvgelo. Szczegóły techniczne: [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md),
+Data: 2026-10-19. Branch: `game/galaxian-coop` (bez merge do `main`, bez remote, bez push).
+Wersja: **RC6** – jeden zestaw zasad dla `1 PILOT` i co-op; Overdrive READY → start w następnym etapie,
+12 s, natychmiastowy kontratak, mocniejsza agresja; naprawa dema.
+RC5: zielone pociski P1, własna sylwetka P2. RC4: naprawa HUD wyniku, Red Laser Overdrive, trwałe W2,
+W3 za 4000, licznik etapu. Sekcja R6 opisuje RC6, R5 – RC5, R4 – RC4, R3 – RC3, sekcja 0 – RC2, sekcje
+1–9 – RC1. Starsze sekcje są aktualne poza miejscami poprawionymi w nowszych (np. W4 na 30 s od razu –
+zmienione w RC6). Autor moda: Zvgelo. Szczegóły techniczne: [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md),
 [MEMORY_MAP.md](MEMORY_MAP.md), testy i pomiary: [TESTING.md](TESTING.md).
+
+## R6. RC6 – wspólne zasady 1P/co-op i nowy Overdrive
+
+### R6.1 Pliki
+
+| Plik | Ścieżka | SHA-256 |
+|---|---|---|
+| ROM RC6 (nie w git) | `games/galaxian-coop/build/Galaxian_Coop.nes` (40 976 B) | `7e5d4fd1ee57fd0dba4901a37002b024bee4f8987bf471b8d7341b9c0ea232ca` |
+| Etykiety Mesen 2 (nie w git) | `games/galaxian-coop/build/Galaxian_Coop.mlb` | – |
+| Łatka BPS (w git) | `games/galaxian-coop/patches/Galaxian_Coop.bps` (5 213 B) | nałożona na oryginał daje plik identyczny bajt w bajt (sprawdzone) |
+
+### R6.2 Różnice 1P/co-op przed RC6 (audyt)
+
+Przejrzałem każdy warunek zależny od `COOP` / `IsCoop`. Różnice w zasadach były trzy:
+1. darmowe W2 za pierwszy Stage 1 – tylko co-op (`StageCleared` pytał `IsCoop`);
+2. Respawn Shield – tylko co-op (`PilotDown` i `CoopPre` pytały `COOP`);
+3. `STG nn` – tylko co-op (`StageWanted`).
+
+Wspólne były już: sloty i prędkości pocisków (`FireShot`, `PreSplit`), zasada śmierci (`ResetBoost`),
+Overdrive (`CheckW4`, `W4Tick`, `ScoreDouble`, haki agresji), Extra Life co 7000 (`ExtraLifeCheck`;
+oryginalne jednorazowe dodatkowe życie `$3D` jest wyzerowane w obu trybach), HUD `Xn`/`Wn`.
+Teraz wszystkie trzy warunki pytają „czy trwa gra” (`STATE` = 3), więc demo się nie zmienia.
+
+Celowo pozostały wyjątki co-op: drugi statek i pad, osobne życia i wyniki, Life Sharing, Game Over po
+wyeliminowaniu obu, wybór celu ataków (`AimDiver`, `BulletAimX`), układ HUD (`CoopHud` w co-op; w 1P prawa część to oryginalne flagi),
+pozycje startowe, treść komunikatów (z „P1”/„P2”). W 1P zostają też oryginalne flagi etapów (wiersze
+3–4 po prawej) obok `STG nn` – liczone z tej samej zmiennej `$59`, zawsze zgodne; w co-op nie mieszczą się.
+
+### R6.3 Overdrive – maszyna stanów
+
+- **READY** (`OD_PEND`): W3 + 8000 punktów bez śmierci, Overdrive jeszcze nieużyty w tym życiu. Pilot zostaje na
+  W3: ×1, bez agresji, bez odliczania. Komunikat 2 s: `OVERDRIVE READY NEXT STAGE` (1P) / `P1 W4 READY NEXT
+  STAGE` (co-op; oba: `P1 P2 W4 READY NEXT STAGE`), w polu pilota w wierszu 2 `W4 RDY` aż do startu.
+- **ACTIVE**: pierwsza klatka nowego etapu, w której formacja jest już na ekranie (`StageCleared` ustawia
+  `OD_ARM`; `OdStart` na początku `CoopPre`, przed `W4Tick`, więc ta klatka jest pierwszą z 720). Gra rysuje
+  nową formację kolumna po kolumnie w pierwszych 21 klatkach gry (0,35 s) – start czeka na ostatnią kolumnę. Jednocześnie: W4, 12 s,
+  ×2, agresja (wszystko zależy od `W4_SEC`), dźwięk aktywacji, `OVERDRIVE!` (`P1 OVERDRIVE!`, `P2 OVERDRIVE!`,
+  `P1 P2 OVERDRIVE!`) i kontratak. Wiersz komunikatu idzie przez row writer w następnym NMI – razem ze
+  sprite'ami tej klatki (oba widoczne w F1); pole `W4 12s` w kolejnej klatce (status poza kolejką co 4 klatki).
+- **EXPIRED**: po 720 klatkach normalnej gry (pauza i przejścia etapów nie liczą się) – W3, ×1, zwykła agresja.
+- **CANCELLED**: śmierć (także w stanie READY), wskrzeszenie przez Life Sharing nie przywraca, nowa gra zeruje
+  wszystko; zawinięcie numeru etapu nie uruchomi go drugi raz (jeden start na jedno wyczyszczenie etapu).
+
+### R6.4 Natychmiastowy kontratak
+
+Analiza: ataki startują tylko w `F415`. Liczniki `$5B–$62` rosną co 4 klatki, a po progu (`F4CC`) `F151`/`F173`
+biorą wolny slot samotnego nurka (`F10E`: sloty 3..`F134`/`F13C[$65]`) i skrajnego obcego z kolumny (`F1C8`).
+`FC66` zeruje liczniki na starcie etapu, więc pierwszy atak przychodzi po ~275 klatkach (4,6 s). `OdAttack`
+w klatce startu woła `F151`, `F173`, `F151` bez czekania na liczniki (limit slotów na chwilę `$65` = 3, potem
+przywrócony). Formacja jest już ustawiona (`FC49` przy wyczyszczeniu), nie dotykamy niezainicjalizowanych
+obiektów. Ważne: na początku etapu ustawione są tylko bity formacji – na ekranie formacji jeszcze nie ma.
+Gra rysuje ją animacją „machania” (`EEE5` kolejkuje kolumny 9..0, `EF7E` rysuje jedną na klatkę), więc
+pojawia się kolumna po kolumnie przez pierwsze ~21 klatek. Pierwsza wersja startowała w pierwszej klatce
+gry i obcy wylatywali z pustego miejsca (widoczne na zrzucie) – teraz `OdStart` zbiera kolejkowane kolumny
+(`OD_COLS`) i startuje, gdy wszystkie 10 są narysowane (kolejka pusta): F0 = klatka ostatniej kolumny,
+zawsze 21 klatek po pierwszej klatce gry w pomiarach. Wynik (test klatkowy, 1P i co-op): w F0 trzech obcych przechodzi ze stanu 0 do 1, w F1 na obrazie
+jest `OVERDRIVE!` i ich sprite'y, w F1–F3 przesuwają się w każdej klatce, trzy kolejne cele nurkowania to
+pilot z W4 (dokładnie wyliczone jak w `EE52`). Ten sam stan bez READY: pierwszy atak po >200 klatkach.
+Ograniczenie: obcy lecą najpierw swoim zwykłym łukiem startowym (~48 klatek), dopiero potem w dół na pilota.
+
+### R6.5 Agresja – zmierzona
+
+Okna 12 s na początku etapów 2–5, 8 sesji na tryb, z tego samego stanu (tarcze, życia utrzymywane):
+
+| | Zwykły etap | Profil RC4 (ten sam start) | RC6 |
+|---|---|---|---|
+| Starty nurkowań / 720 klatek | 3,25 | 4,0 (+23 %) | **5,75 (+77 %)** |
+| Pierwszy atak (klatki od pierwszej klatki gry etapu) | ~275 | ~220 | **20 (F0 – formacja narysowana)** |
+| Pociski wrogów / 720 klatek | 6,5 | 11,1 | **17,2** |
+| Prędkość nurkowania | 1,00 px/kl. | 1,14 | **1,23 (+23 %)** |
+
+Stały stan (co-op, P2 w Overdrive, 6 × 60 s): starty +59 % (RC4 +46 %), prędkość +23 % (RC4 +14 %), pociski
+w stronę P2 80–90 % (RC4 52 %), decyzje celu nurkowania (tracer, zliczone wywołania `EE52`): 75 % na pilota z W4
+(P2 sam: 159/211, P1 sam: 172/229), obaj w W4: 50/50, bez Overdrive 50/50. Dwa W4 nie sumują agresji
+(`OdActive` to jeden warunek). Pierwsza wersja (dodatkowo `SoloGate` z RC4) dawała +87–101 % startów i +33 %
+prędkości – zmniejszyłem ją do celu 60–75 % / 20–25 %.
+
+### R6.6 Wydajność
+
+Poprawiona metoda z RC3 (licznik bezczynności z korektą przerwania), cynes, 12 sesji × 3 min na scenariusz:
+
+| Scenariusz | Najgorsza klatka (iteracje) | Lag | Resety |
+|---|---|---|---|
+| co-op, obaj W4 + agresja, 8 laserów, ×2 | 100 | 0 | 0 |
+| to samo + obie tarcze | 44 | 0 | 0 |
+| 1P W4 + agresja | 168 | 0 | 0 |
+| 1P W4 + tarcza | 83 | 0 | 0 |
+| poprzedni ROM (profil RC4/RC5), co-op W4/W4 | 83 | 0 | 0 |
+| poprzedni ROM, co-op W4/W4 + tarcze | 37 | 0 | 0 |
+| klatki aktywacji F0–F7 (40 startów, w grze) | ≥ 225 (F0) | 0 | – |
+
+RC5 w swoich sesjach: 96 / 73 – sesje cynes startują z losowego stanu, więc to inne gry; w tych samych
+sesjach poprzedni ROM wypadł 83 / 37, RC6 100 / 44. Limit 7 pocisków wrogów i 7 nurków to nadal limity
+oryginalnego silnika; `SoloLimit` nigdy nie przekracza poziomu 7.
+
+### R6.7a Usterki HUD w 1P zgłoszone z testu manualnego
+
+**BUG 1 – glitche w obszarze wyniku P2 w 1P – odtworzony** na RC5 i na RC6 przed poprawką, tylko po grze
+co-op (1P od włączenia konsoli było czyste): w wierszu 3 kolumna 24 „U” z `2UP`, kolumna 30 cyfra `W` P2,
+w wierszu 4 kolumna 24 cyfra wyniku P2, kolumna 30 liczba żyć P2. Przyczyna: bufor HUD `$0690–$06BB`
+(wiersze 3–4, kolumny 20–31, wysyłany przez `E342`) wypełnia w co-op `CoopHud`, a nic go nie czyściło przy
+starcie gry – oryginał pisze tam tylko ikony rezerwowych statków (`E897`, kolumny 21–23) i flagi etapów
+(`E8B2`, kolumny 25–29), a dawny `SoloHud` czyścił co 4 klatki tylko kolumny 21–23. RAM P2 był czysty
+(wynik `$0129` zerowany przez `FCE2`, `P2_STATE` = 0).
+Poprawka u źródła, bez nadpisywania co klatkę:
+- `HudRightClear` (wołane z `CoopInit`, hook `$FA34`, przy każdym starcie gry, przed `FA41`): 24 komórki bufora puste;
+- `$E897` → `RTS`: ikon rezerwy nie ma w żadnym trybie (życia to `Xn`); `SoloHud` usunięty;
+- `$E8B2` → `JSR StageFlags`: flagi tylko poza co-op. Przy okazji znalazłem pokrewny błąd w co-op: przy starcie
+  etapu i odrodzeniu P1 oryginał wpisywał flagi (od etapu 6 też cyfry) w komórki P2, aż `CoopHud` je
+  nadpisał – na ekranie, gdy strumień HUD trafił w tę fazę.
+
+**BUG 2 – brak `STG` w 1P** – w RC6 już naprawiony (wspólne `StageWanted`, ta sama procedura i pole w
+obu trybach: wiersz 2, kolumny 13–18, kolejka VRAM w klatkach 2 mod 4, tylko przy zmianie wartości).
+Oryginalne flagi etapów w 1P zostają (wiersze 3–4 po prawej) – zawsze zgodne z `STG`.
+
+Testy (cynes): `test_mode_switch_hud` (bez restartu emulatora: 1P → 2P → 1P → 2P → 1P → 1P; każda gra:
+nametable wierszy 2–4 = RAM, piksele wyników, `STG 01`, w 1P prawa część identyczna jak w 1P od zera,
+komórki P2 puste na obrazie), `test_solo_long_game_hud` (1P po co-op: etapy 1–4, `STG 01→04`, wynik
+> 10 000 i > 20 000, Extra Life, W2, W3, READY i aktywne W4 z ×2 przy widocznym `STG`, śmierć z tarczą i
+powrót na W2, GAME OVER i tytuł; w każdej klatce prawa część tylko flagi/puste/cyfry etapu, zero resztek
+P2), `test_coop_hud_no_stage_flags` (co-op do etapu 7 i śmierci P1: żadnej flagi w buforze ani w nametable
+w części P2). FCEUmm: `test_mode_switch_hud` (co-op → GAME OVER → 1P, komórki P2 puste na obrazie, flaga
+narysowana). Sprawdziłem, że testy wykrywają błąd: na wariancie bez `HudRightClear` cynes i FCEUmm
+zgłaszają „2UP”/`W` P2; na wariancie bez `StageFlags` test co-op zgłasza flagi w buforze.
+Wydajność: mniej pracy niż przed poprawką (bez `SoloHud` co 4 klatki i bez `E897`); `HudRightClear`
+raz na grę (~150 cykli); żadnych nowych zapisów VRAM.
+
+### R6.7 Naprawa dema (stary błąd od RC1)
+
+Demo w ogóle nie strzelało (oryginał strzela): jego „pilot” naciska ogień, gdy `$0280` = `$C8`, a od RC1
+`$0280` to sprite slotu 0 P1, ukrywany przez `PreSplit` przed logiką. `DemoBullet` (`F5A5`, `F5DF`) podaje
+demu widok oryginału; w demie zawsze W1.
+
+### R6.8 Testy
+
+- cynes `test_coop.py`: **112/112 OK** (~640 s) – 89 testów RC5 (2 przemianowane, kilka zaktualizowanych do nowych
+  zasad, żaden nie usunięty) + 23 nowe: zgodność 1P/co-op (start, darmowe W2, progi, Overdrive, agresja w 1P, śmierć,
+  Extra Life, `STG`, HUD w pauzie i GAME OVER, brak P2 w 1P, strzały, stres 1P), demo, tarcza 1P; Overdrive (READY
+  bez zmian w grze, klatkowy test kontrataku F0–F3, obaj piloci, anulowanie, READY ostatnim zestrzeleniem, jeden
+  start, HUD READY); HUD 1P (przełączanie trybów bez restartu, długa gra 1P po co-op, brak flag w polu P2 w co-op).
+- tracer `test_trace.py`: **5/5 OK** (dżingiel w klatce startu i jeden raz, dźwięki w 1P, muzyka i RAM melodii).
+- FCEUmm `test_fceumm.py`: **8/8 OK** (dodane: start Overdrive z kontratakiem, zasady 1P, HUD po co-op → 1P).
+- Testy usterek sprawdzone też „negatywnie”: na wariantach ROM-u bez poprawki (bez `HudRightClear`, bez
+  `StageFlags`) odpowiednie testy cynes i FCEUmm zgłaszają błąd.
+
+### R6.9 Commity RC6
+
+Na `game/galaxian-coop`, od najstarszego (bez merge do `main`, bez push, bez remote):
+`8f30ee0 Unify player progression`, `4776844 Enable solo respawn shield`, `5cdd24c Enable solo stage HUD`,
+`54e0d94 Restore demo firing`, `aa44399 Add solo parity tests`, `5fe537d Strengthen overdrive aggression`,
+`4577b68 Start overdrive with next stage`, `ece6f71 Fix solo HUD after co-op`, `69d58d9 Add overdrive and HUD tests`,
+`Update RC6 docs` (dokumentacja, BPS). Każdy commit kodu się buduje (sprawdzone).
+
+### R6.10 Ograniczenia
+
+- Nie testowane w teście manualnym / Mesen 2 / sprzęcie; RC6 nie jest zaakceptowane przed testem użytkownika.
+- Kontratak to zwykłe nurkowania gry: najpierw łuk startowy, potem lot na pilota; w co-op z dwoma W4 jeden z
+  trzech celów idzie do drugiego pilota (podział P2, P1, P2).
+- Kontratak nie startuje, jeśli P1 jest akurat trafiony (zasada `F415`); w co-op W4 P2 dostaje wtedy samą agresję.
+- `W4 RDY` / `NEXT STAGE` w skrócie: pole HUD ma 6 komórek, wiersz komunikatu 26.
+- Pole `W4 12s` pojawia się klatkę po `OVERDRIVE!` (wiersz komunikatu zajmuje row writer w klatce startu).
+- Start 21 klatek (0,35 s) po pierwszej klatce gry nowego etapu – wcześniej formacji nie ma na ekranie.
+- RC4 „ataki w oknie flagowca” usunięte na rzecz `SoloLimit` (stabilniejszy profil).
 
 ## R5. RC5 – tożsamość wizualna pilotów
 

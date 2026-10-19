@@ -197,7 +197,7 @@ class TestBuild(unittest.TestCase):
         chr_new, chr_old = self.rom[16 + 0x8000:], self.orig[16 + 0x2000:]
         diff = [i for i in range(0x2000) if chr_new[i] != chr_old[i]]
         allowed = set(build.LOGO_CELLS) | {t * 16 + k for t in build.P2_TILES + (build.LASER_TILE,) for k in range(16)}
-        allowed |= {0x1000 + build.SECONDS_TILE * 16 + k for k in range(16)}
+        allowed |= {0x1000 + t * 16 + k for t in (build.SECONDS_TILE, build.EXCL_TILE) for k in range(16)}
         self.assertTrue(set(diff) <= allowed)
         for off in build.LOGO_CELLS:
             self.assertEqual(chr_new[off], 0x10)
@@ -745,10 +745,11 @@ class TestEmulator(unittest.TestCase):
                 self.assertEqual((tile, attr), (0x60, 2) if level == 3 else (0x30, 2))
 
     def test_boost_thresholds(self):
-        n = self.start(self.rom, two=False)           # 1P: no free W2
+        n = self.start(self.rom, two=False)           # RC6: 1P gets the free W2 too
         n.step(3)
         self.clear_stage(n)
-        self.assertEqual(n[self.WLEVEL0], 0, '1P: clearing stage 1 gives nothing')
+        self.assertEqual(n[self.WLEVEL0], 1, '1P: clearing stage 1 gives W2')
+        n[self.WLEVEL0], n[SYM['W2_OWNED']] = 0, 0        # a W1 pilot after the free W2 was given
         for boost, want in ((199, 0), (200, 1)):          # 1999 / 2000 points
             st = n.save()
             n[self.BOOST_LO0], n[self.BOOST_HI0] = boost & 0xFF, boost >> 8
@@ -785,36 +786,43 @@ class TestEmulator(unittest.TestCase):
         self.fail('no points scored')
 
     def test_w4_red_laser(self):
+        """RC6: 8000 no-death points on W3 make the overdrive READY (W3 kept,
+        "P1 W4 READY NEXT STAGE" on row 1 for ~2 s, "W4 RDY" on row 2); it
+        starts with the next stage ("P1 OVERDRIVE!", "W4 12s"). From W2 no W4;
+        W3 given at a stage clear with 8000 no-death points: W4 from the very
+        next stage."""
         n = self.start(self.rom, two=True)
         n.step(3)
         n.controller = pads(0, LEFT); n.step(40); n.controller = 0
         st = n.save()
-        # W3 with 7990 no-death points: +30..+800 crosses 8000 -> W4 at once
-        n[self.WLEVEL0] = 2
+        n[self.WLEVEL0] = 2                               # W3 with 7990 no-death points
         n[self.NODEATH_LO0], n[self.NODEATH_HI0] = 799 & 0xFF, 799 >> 8
         n[LIVES1] = 5
-        self.score_points(n, 0)
-        self.assertEqual(n[self.WLEVEL0], 3, 'W4 when 8000 no-death points are reached on W3')
-        self.assertEqual(n[self.WLEVEL0 + 1], 0, 'P2 unaffected')
-        # banner "P1 GREAT SHOT", gone after ~2 s; RC4: row 2 shows the
-        # overdrive countdown instead of "W4 RED LASER"
-        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C])
+        self.calm_points(n, 0)
+        self.assertEqual((n[self.WLEVEL0], n[SYM['OD_PEND']]), (2, 1), 'READY: still W3')
+        self.assertEqual((n[self.WLEVEL0 + 1], n[SYM['OD_PEND'] + 1]), (0, 0), 'P2 unaffected')
+        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C, build.EXCL_TILE])
         n.step(6)
-        self.assertEqual(self.read_row(n, g, 1).strip(), 'P1 GREAT SHOT')
-        self.assertEqual(self.status_row(n)[0], 'W4 30s')
+        self.assertEqual(self.read_row(n, g, 1).strip(), 'P1 W4 READY NEXT STAGE')
+        self.assertEqual(self.status_row(n)[0], 'W4 RDY')
         n.step(130)
-        self.assertEqual(self.read_row(n, g, 1).strip(), '')
-        self.assertEqual(self.status_row(n)[0], 'W4 28s')
-        # W2 with plenty of no-death points: no W4 before W3
-        n.load(st)
+        self.assertEqual(self.read_row(n, g, 1).strip(), '', 'message gone after ~2 s')
+        self.assertEqual(self.status_row(n)[0], 'W4 RDY', 'READY stays on row 2')
+        self.next_stage(n)
+        self.assertEqual((n[self.WLEVEL0], n[SYM['W4_SEC']]), (3, 12))
+        n.step(4)
+        self.assertEqual(self.read_row(n, g, 1).strip(), 'P1 OVERDRIVE!')
+        self.assertEqual(self.status_row(n)[0], 'W4 12s')
+        n.load(st)                                        # W2 with plenty of no-death points
         n[self.WLEVEL0] = 1
         n[self.NODEATH_LO0], n[self.NODEATH_HI0] = 0xFF, 0x03
         n[LIVES1] = 5
-        self.score_points(n, 0)
-        self.assertEqual(n[self.WLEVEL0], 1)
+        self.calm_points(n, 0)
+        self.assertEqual((n[self.WLEVEL0], n[SYM['OD_PEND']]), (1, 0), 'no W4 before W3')
         n[self.BOOST_LO0], n[self.BOOST_HI0] = 500 & 0xFF, 500 >> 8
-        self.clear_stage(n)
-        self.assertEqual(n[self.WLEVEL0], 3, 'W3 granted, and W4 right away')
+        self.next_stage(n)
+        self.assertEqual((n[self.WLEVEL0], n[SYM['OD_PEND']], n[SYM['W4_SEC']]), (3, 0, 12),
+                         'W3 at the clear of stage N with 8000 no-death points: W4 from stage N+1')
         # both pilots on W4: up to 8 bullets, 4 each
         n.load(st)
         n[self.WLEVEL0], n[self.WLEVEL0 + 1] = 3, 3
@@ -928,7 +936,7 @@ class TestEmulator(unittest.TestCase):
             if None in cells:
                 continue
             names = {**{i: str(i) for i in range(10)}, 0x10: ' ', 0x0A: '1', 0x0B: '2', 0x0C: '4',
-                     **{0x11 + i: chr(65 + i) for i in range(26)}}
+                     build.EXCL_TILE: '!', **{0x11 + i: chr(65 + i) for i in range(26)}}
             return ''.join(names.get(c, '?') for c in cells)
         return best
 
@@ -994,6 +1002,21 @@ class TestEmulator(unittest.TestCase):
         n[LIVES1] = n[LIVES2] = 5
         self.run_pads(n, [0] * 60)                       # let every shot land
         return n
+
+    def solo_at_edge(self):
+        """1 PILOT game, P1 far left (where co-op_at_edges puts it)."""
+        n = self.start(self.rom, two=False)
+        for _ in range(130):
+            self.calm(n)
+            n.controller = pads(LEFT)
+            n.step()
+        n.controller = 0
+        n[LIVES1] = 5
+        self.run_pads(n, [0] * 60)
+        return n
+
+    def game_at_edges(self, two):
+        return self.coop_at_edges() if two else self.solo_at_edge()
 
     def run_pads(self, n, seq1, seq2=None):
         """Feed buttons frame by frame (calm screen); frames with a new shot per pilot."""
@@ -1196,8 +1219,8 @@ class TestEmulator(unittest.TestCase):
             return False
         return ((shield - 1) & 8) == 0 if shield > 60 else ((shield - 1) & 4) == 0
 
-    def respawned(self, pilot):
-        n = self.coop_at_edges()
+    def respawned(self, pilot, two=True):
+        n = self.coop_at_edges() if two else self.solo_at_edge()
         self.kill(n, pilot)
         self.assertEqual(n[self.SHIELD0 + pilot], 240, 'set when hit, waits for the ship')
         for _ in range(60):
@@ -1208,9 +1231,9 @@ class TestEmulator(unittest.TestCase):
         self.wait_back(n, pilot)
         return n
 
-    def check_shield(self, pilot):
+    def check_shield(self, pilot, two=True):
         other = 1 - pilot
-        n = self.respawned(pilot)
+        n = self.respawned(pilot, two)
         state = n.save()
         self.assertEqual(n[self.WLEVEL0 + pilot], 0, 'W1 after the respawn')
         self.assertEqual(n[self.SHIELD0 + other], 0)
@@ -1251,30 +1274,40 @@ class TestEmulator(unittest.TestCase):
     def test_shield_p2(self):
         self.check_shield(1)
 
+    def test_shield_single_player(self):
+        """RC6: the same 4-s shield in 1 PILOT (was co-op only): set when hit,
+        240 frames from the return, bullets pass, lives / weapon / points kept,
+        moves and fires, then deadly again."""
+        self.check_shield(0, two=False)
+
     def test_shield_blocks_diver_collisions(self):
-        """Natural diver collisions (enemy bullets removed) replayed with a shield."""
+        """Natural diver collisions (enemy bullets removed) replayed with a
+        shield: co-op P1 and P2, and RC6 1 PILOT."""
         import random
         found = {}
-        rnd = random.Random(1)
-        n = self.start(self.rom, two=True)
-        hist, c = [], 0
-        for i in range(60 * 60 * 6):
-            for k in range(7):
-                n[0x284 + 4 * k] = 0
-            n[LIVES1] = n[LIVES2] = 5
-            if i % 10 == 0:
-                c = pads(rnd.choice([0, LEFT, RIGHT]), rnd.choice([0, LEFT, RIGHT]))
-            n.controller = c
-            hist = (hist + [(n.save(), c)])[-12:]
-            was = [self.alive(n, 0), self.alive(n, 1)]
-            n.step()
-            for pilot in (0, 1):
-                if was[pilot] and not self.alive(n, pilot) and pilot not in found:
-                    found[pilot] = list(hist)
-            if len(found) == 2:
-                break
-        self.assertEqual(sorted(found), [0, 1], 'no diver collision found for both pilots')
-        for pilot, frames in found.items():
+        for two, wanted in ((True, (0, 1)), (False, ('solo',))):
+            rnd = random.Random(1)
+            n = self.start(self.rom, two=two)
+            hist, c = [], 0
+            for i in range(60 * 60 * 6):
+                for k in range(7):
+                    n[0x284 + 4 * k] = 0
+                n[LIVES1] = n[LIVES2] = 5
+                if i % 10 == 0:
+                    c = pads(rnd.choice([0, LEFT, RIGHT]), rnd.choice([0, LEFT, RIGHT]))
+                n.controller = c
+                hist = (hist + [(n.save(), c)])[-12:]
+                was = [self.alive(n, 0), self.alive(n, 1)]
+                n.step()
+                for key in wanted:
+                    pilot = 0 if key == 'solo' else key
+                    if was[pilot] and not self.alive(n, pilot) and key not in found:
+                        found[key] = list(hist)
+                if all(k in found for k in wanted):
+                    break
+        self.assertEqual(sorted(found, key=str), [0, 1, 'solo'], 'no diver collision found for every pilot')
+        for key, frames in found.items():
+            pilot = 0 if key == 'solo' else key
             for shield in (0, 200):
                 m = NES(self.rom)
                 m.load(frames[0][0])
@@ -1286,7 +1319,7 @@ class TestEmulator(unittest.TestCase):
                     m.controller = pad
                     m.step()
                     hit = hit or not self.alive(m, pilot)
-                self.assertEqual(hit, shield == 0, f'P{pilot + 1} diver collision, shield {shield}')
+                self.assertEqual(hit, shield == 0, f'{key} diver collision, shield {shield}')
 
     def test_shields_independent(self):
         n = self.coop_at_edges()
@@ -1330,37 +1363,60 @@ class TestEmulator(unittest.TestCase):
         self.assertTrue(self.survives(n, 1))
 
     def test_no_shield_at_game_or_stage_start(self):
-        n = self.start(self.rom, two=True)
-        n.step(3)
-        self.assertEqual((n[self.SHIELD0], n[self.SHIELD0 + 1]), (0, 0), 'new game')
-        self.kill(n, 0)
-        n = self.start(self.rom, two=True)
-        n.step(3)
-        self.clear_stage(n)
-        for _ in range(300):
-            n.step()
-            if n[SUBSTATE] == 8 and n[P1_DEAD] == 0:
-                break
-        n.step(3)
-        self.assertEqual((n[self.SHIELD0], n[self.SHIELD0 + 1]), (0, 0), 'next stage')
-        self.kill(n, 1)
+        """No shield at a new game or a new stage without a death, in both
+        modes (RC6: also 1 PILOT); a ship hit there is lost."""
+        for two in (True, False):
+            n = self.start(self.rom, two=two)
+            n.step(3)
+            self.assertEqual((n[self.SHIELD0], n[self.SHIELD0 + 1]), (0, 0), 'new game')
+            self.kill(n, 0)
+            n = self.start(self.rom, two=two)
+            n.step(3)
+            self.clear_stage(n)
+            for _ in range(300):
+                n.step()
+                if n[SUBSTATE] == 8 and n[P1_DEAD] == 0:
+                    break
+            n.step(3)
+            self.assertEqual((n[self.SHIELD0], n[self.SHIELD0 + 1]), (0, 0), 'next stage')
+            self.kill(n, 1 if two else 0)
 
-    def test_single_player_has_no_shield(self):
-        n = self.start(self.rom, two=False)
-        n[LIVES1] = 3
-        n.controller = pads(LEFT); n.step(60); n.controller = 0
-        self.kill(n, 0)
-        self.assertEqual(n[self.SHIELD0], 0)
-        self.wait_back(n, 0)
-        self.assertEqual(n[self.SHIELD0], 0)
-        for _ in range(30):                              # no blinking
-            f = n.step()
-            self.assertTrue(self.ship_shown(n, f, 0))
-        self.kill(n, 0)
+    def test_demo_has_no_shield_or_boost(self):
+        """RC6: the shield and the free W2 belong to games (1P and co-op): the
+        attract demo (its ship dies and clears waves on its own) never gets a
+        shield (P1_BLOCK is only P1_DEAD; a death sets no shield frames; SHIELD
+        holds the reset copy's $FF until then and is not read in the demo), a
+        weapon boost or P2. RC6: the demo pilot fires again as in the original
+        (its AI waits for $0280 = $C8, the bullet resting on the ship; RC1-RC5
+        never fired): one shot at a time, slot 0 only."""
+        n = NES(self.rom)
+        demo = deaths = shots = 0
+        prev_dead = prev_y = 0
+        for _ in range(60 * 60 * 4):
+            n.step()
+            if n[STATE] != 2:
+                continue
+            demo += 1
+            if prev_dead == 0 and 0 < n[P1_DEAD] < 0x20:  # hit ($21/$22: the demo's setup)
+                deaths += 1
+                self.assertEqual(n[self.SHIELD0], 0, 'no shield frames for a demo death')
+            if prev_dead == 0 and n[P1_DEAD] == 0:
+                self.assertEqual(n[SYM['P1_BLOCK']], 0, 'a demo ship in play can be hit')
+            prev_dead = n[P1_DEAD]
+            self.assertEqual((n[self.WLEVEL0], n[SYM['STAGE1_DONE']]), (0, 0))
+            self.assertFalse(p2_visible(n))
+            shots += n[self.BUL_Y0] > prev_y
+            prev_y = n[self.BUL_Y0]
+            self.assertEqual([n[self.BUL_Y0 + k] for k in range(1, 8)], [0] * 7, 'demo: slot 0 only')
+        self.assertGreater(demo, 1000, 'demo seen')
+        self.assertGreater(deaths, 0, 'a demo ship was hit')
+        self.assertGreater(shots, 20, 'the demo pilot fires')
 
     def test_shield_blinking(self):
-        for pilot in (0, 1):
-            n = self.coop_at_edges()
+        """P1 (background) and P2 (sprites) blink 8/8 then 4/4 frames during
+        the shield; RC6: P1 in 1 PILOT the same way."""
+        for two, pilot in ((True, 0), (True, 1), (False, 0)):
+            n = self.game_at_edges(two)
             nt0 = nametable(n)[26 * 32:28 * 32]
             oam0 = [n[P2_OAM + k] for k in range(16)]
             self.kill(n, pilot)
@@ -1391,7 +1447,7 @@ class TestEmulator(unittest.TestCase):
                 self.calm(n)
                 f = n.step()
                 self.assertTrue(self.ship_shown(n, f, pilot))
-                self.assertTrue(self.ship_shown(n, f, 1 - pilot))
+                self.assertEqual(self.ship_shown(n, f, 1 - pilot), two, 'partner shown (1P: no P2)')
             self.assertEqual(nametable(n)[26 * 32:28 * 32], nt0, 'ship rows unchanged')
             if pilot == 1:
                 self.assertEqual([n[P2_OAM + k] for k in range(16) if k % 4 != 3],
@@ -1626,6 +1682,21 @@ class TestEmulator(unittest.TestCase):
         row4 = ([0x10, 0x6F, 0x28, min(p1, 9)] + [n[0x117 + k] for k in range(6)] + [0x10] * 3
                 + [n[0x120 + k] for k in range(6)] + [0x10] * 2 + [n[0x129 + k] for k in range(6)]
                 + [0x10, 0x6F, 0x28, min(p2, 9), 0x10])
+        if not n[COOP]:                                  # RC6: 1 PILOT, cols 20-31 are the original's
+            row3[20:], row4[20:] = self.solo_flags(n)
+        return row3, row4
+
+    @staticmethod
+    def solo_flags(n):
+        """1 PILOT, rows 3-4 cols 20-31: the original stage flags (E8B2) - one
+        flag per stage up to stage 5, from stage 6 one flag and the number
+        (cols 26-27); E897's reserve icons are not drawn (RC6: E897 returns)."""
+        row3, row4 = [0x10] * 12, [0x10] * 12
+        flags = n[0x59] + 1 if n[0x59] < 5 else 1
+        for x in range(flags):
+            row3[5 + x], row4[5 + x] = 0x6C, 0x6D
+        if n[0x59] >= 5:
+            row4[6], row4[7] = (n[0x59] + 1) // 10, (n[0x59] + 1) % 10
         return row3, row4
 
     def hud_settled(self, n, frames=16):
@@ -1649,13 +1720,13 @@ class TestEmulator(unittest.TestCase):
     def assert_hud_pixels(self, n, g, msg=''):
         """The rendered score digits read back from the picture (glyph match)."""
         f = n.step()
-        for base, col in ((0x117, 4), (0x120, 13), (0x129, 21)):
+        for base, col in ((0x117, 4), (0x120, 13), (0x129, 21))[:3 if n[COOP] else 2]:
             cells = [read_tile(f, g, col + k, 4) for k in range(6)]
             want = [n[base + k] for k in range(6)]
             ok = [c is None or c == w for c, w in zip(cells, want)]  # None: a star crosses the cell
             self.assertTrue(all(ok), f'pixels {cells} != {want} {msg}')
             self.assertGreaterEqual(sum(c is not None for c in cells), 4, msg)
-        for col in (10, 11, 12, 19, 20, 27):
+        for col in (10, 11, 12, 19, 20, 27) if n[COOP] else (10, 11, 12, 19, 20, 21, 22, 23):
             self.assertIn(read_tile(f, g, col, 4), (0x10, None), f'row 4 col {col} not blank {msg}')
 
     def set_scores(self, n, p1, p2):
@@ -1783,8 +1854,9 @@ class TestEmulator(unittest.TestCase):
         text = lambda a, b: ''.join(names.get(t, '?') for t in row[a:b])
         return text(2, 8), text(13, 19), text(22, 28), row
 
-    def overdrive(self, n, pilot):
-        """W3 with 7990 no-death points, then one kill: overdrive (W4) starts."""
+    def ready(self, n, pilot):
+        """W3 with 7990 no-death points, then one kill: the overdrive is READY
+        (RC6: it starts with the next stage; the pilot stays on W3)."""
         n[self.WLEVEL0 + pilot] = 2
         n[self.NODEATH_LO0 + pilot], n[self.NODEATH_HI0 + pilot] = 799 & 0xFF, 799 >> 8
         n[LIVES1 if pilot == 0 else LIVES2] = 5
@@ -1792,7 +1864,40 @@ class TestEmulator(unittest.TestCase):
             n[SHIP_X if pilot == 0 else P2_X] = 0xE0 if pilot == 0 else 0x20
             n.step(2)
         self.calm_points(n, pilot)
-        self.assertEqual(n[self.WLEVEL0 + pilot], 3, 'overdrive on')
+        self.assertEqual((n[self.WLEVEL0 + pilot], n[SYM['OD_PEND'] + pilot], n[SYM['W4_SEC'] + pilot]), (2, 1, 0),
+                         'READY, still W3')
+
+    def next_stage(self, n):
+        """Clear the stage (unless a stage change is under way); returns once
+        F0 ran: the first frame of the next stage with its formation drawn,
+        where READY overdrives start (OD_ARM cleared)."""
+        if n[SUBSTATE] == 8 and not n[SYM['OD_ARM']]:
+            for k in range(10):
+                n[0xC3 + k] = 0
+            for k in range(8):
+                n[0x738 + k] = 0
+        armed = n[SYM['OD_ARM']] == 1
+        for _ in range(1200):
+            n[LIVES1], n[LIVES2] = max(n[LIVES1], 2), max(n[LIVES2], 2)
+            n.step()
+            if n[SYM['OD_ARM']]:
+                armed = True
+            elif armed:
+                return
+        self.fail('next stage not reached')
+
+    def overdrive(self, n, *pilots):
+        """The pilots get READY (points), then the next stage starts: W4. (If
+        the READY kill was the stage's last alien, the next stage has already
+        begun and W4 is running.)"""
+        for pilot in pilots:
+            self.ready(n, pilot)
+        if any(n[SYM['OD_PEND'] + p] for p in pilots):
+            self.next_stage(n)
+            for pilot in pilots:
+                self.assertEqual((n[self.WLEVEL0 + pilot], n[SYM['W4_SEC'] + pilot]), (3, 12), 'overdrive on')
+        for pilot in pilots:
+            self.assertEqual(n[self.WLEVEL0 + pilot], 3, 'overdrive on')
 
     def calm_points(self, n, pilot, frames=1500):
         """Fire until the pilot scores, with no enemy fire or dives (no death)."""
@@ -1914,33 +2019,39 @@ class TestEmulator(unittest.TestCase):
             self.assertEqual(n[P1_OUT], 0)
             self.assertEqual(n[self.WLEVEL0], want, f'revived P1, W2 unlocked: {owned}')
 
-    def test_overdrive_lasts_30_seconds(self):
-        """W4 for 1800 frames of normal play, the countdown on HUD row 2
-        ("W4 30s" .. "W4 01s"), then W3 and the field blank; once per life."""
+    def test_overdrive_lasts_12_seconds(self):
+        """RC6: W4 for exactly 720 frames of normal play counted from its start
+        frame (RC4: 1800), the countdown on HUD row 2 ("W4 12s" .. "W4 01s"),
+        then W3 and the field blank; once per life (no second READY with
+        >= 8000 no-death points); after a death a new life may use it again."""
         n = self.coop_at_edges()
         self.overdrive(n, 0)
-        self.assertEqual(n[SYM['W4_SEC']], 30)
-        n.step(8)
-        self.assertEqual(self.status_row(n)[0], 'W4 30s')
+        self.assertEqual((n[SYM['W4_SEC']], n[SYM['W4_FRM']]), (12, 59), 'the start frame counted')
         seen = set()
-        played = 0
-        while n[self.WLEVEL0] == 3 and played < 2000:
+        played = 1
+        while n[self.WLEVEL0] == 3 and played < 1000:
             played += self.play_frames(n, 1)
             if n[self.WLEVEL0] == 3:
                 seen.add(n[SYM['W4_SEC']])
                 shown = self.status_row(n)[0]
-                self.assertIn(shown, ('W4 %02ds' % n[SYM['W4_SEC']], 'W4 %02ds' % (n[SYM['W4_SEC']] + 1)))
+                ok = ('W4 %02ds' % n[SYM['W4_SEC']], 'W4 %02ds' % (n[SYM['W4_SEC']] + 1))
+                if played <= 3:                          # the field follows 1-2 frames after the start
+                    ok += ('W4 RDY',)
+                self.assertIn(shown, ok, f'frame {played}')
         self.assertEqual(n[self.WLEVEL0], 2, 'W3 after the overdrive')
-        self.assertAlmostEqual(played + 8, 1800, delta=2)          # + the 8 frames before the loop
-        self.assertEqual(seen, set(range(1, 31)))
+        self.assertEqual(played, 720)
+        self.assertEqual(seen, set(range(1, 13)))
         n.step(8)
         self.assertEqual(self.status_row(n)[0], '      ', 'countdown gone')
         self.assertEqual(self.status_row(n)[3][2:8], bytes([0x10] * 6))
         n[self.NODEATH_LO0], n[self.NODEATH_HI0] = 900 & 0xFF, 900 >> 8   # still >= 8000: no second W4
         self.calm_points(n, 0)
-        self.assertEqual(n[self.WLEVEL0], 2, 'overdrive only once per life')
+        self.assertEqual((n[self.WLEVEL0], n[SYM['OD_PEND']]), (2, 0), 'overdrive only once per life')
+        self.next_stage(n)
+        self.assertEqual(n[self.WLEVEL0], 2)
         self.kill(n, 0)                                    # a new life may use it again
         self.wait_back(n, 0)
+        n[SYM['W2_OWNED']] = 1
         self.overdrive(n, 0)
 
     def test_overdrive_pause_and_stage_change(self):
@@ -1977,22 +2088,38 @@ class TestEmulator(unittest.TestCase):
         self.assertEqual(n[self.WLEVEL0 + 1], 3)
 
     def test_overdrive_independent_pilots(self):
+        """RC6 18-20: P1 and P2 have their own READY, start, countdown and end:
+        both READY in one stage start together at the next one; one READY
+        alone starts alone; a death ends only that pilot's overdrive; one may
+        end (time up) while the other's still runs."""
         n = self.coop_at_edges()
-        self.overdrive(n, 0)
-        self.play_frames(n, 300)
-        self.overdrive(n, 1)
+        self.overdrive(n, 0, 1)                            # both in the same stage start
         n.step(8)
         p1, stage, p2, _ = self.status_row(n)
-        self.assertEqual(p2, 'W4 30s')
-        self.assertIn(p1, ('W4 24s', 'W4 25s', 'W4 23s'))
-        self.assertEqual(stage, 'STG 01')
+        self.assertEqual((p1, stage, p2), ('W4 12s', 'STG 02', 'W4 12s'))
         self.assertEqual((n[self.WLEVEL0], n[self.WLEVEL0 + 1]), (3, 3), 'both on W4')
+        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C, build.EXCL_TILE])
+        self.assertEqual(self.read_row(n, g, 1).strip(), 'P1 P2 OVERDRIVE!')
+        st = n.save()
         self.kill(n, 0)                                    # P1's death ends only P1's overdrive
         n.step(8)
         p1, _, p2, _ = self.status_row(n)
         self.assertEqual(p1, '      ')
         self.assertTrue(p2.startswith('W4 '))
         self.assertEqual(n[self.WLEVEL0 + 1], 3)
+        n.load(st)                                         # P1's time runs out first
+        n[SYM['W4_SEC']], n[SYM['W4_FRM']] = 1, 30
+        self.play_frames(n, 40)
+        self.assertEqual((n[self.WLEVEL0], n[self.WLEVEL0 + 1]), (2, 3))
+        n.step(8)
+        p1, _, p2, _ = self.status_row(n)
+        self.assertEqual(p1, '      ')
+        self.assertRegex(p2, r'^W4 1[0-2]s$')
+        n = self.coop_at_edges()                           # only P2 READY: only P2 starts
+        self.overdrive(n, 1)
+        self.assertEqual((n[self.WLEVEL0], n[SYM['W4_SEC']]), (1, 0), 'P1: the free W2 of stage 1, no W4')
+        n.step(4)
+        self.assertEqual(self.read_row(n, g, 1).strip(), 'P2 OVERDRIVE!')
 
     def test_overdrive_shots_finish_their_flight(self):
         """Lasers flying when W4 ends keep their speed and look; new shots are
@@ -2070,7 +2197,11 @@ class TestEmulator(unittest.TestCase):
         p1, p2 = self.score_steps(n, 1200)
         self.assertTrue(set(p1) <= double and set(p2) <= double, (sorted(set(p1)), sorted(set(p2))))
         n[SYM['W4_SEC']], n[SYM['W4_FRM']] = 1, 2          # P1's W4 ends: x1 at once
-        n.step(3)
+        for _ in range(600):                               # (2 frames of play; a stage change may be on)
+            n[LIVES1], n[LIVES2] = max(n[LIVES1], 3), max(n[LIVES2], 3)
+            n.step()
+            if n[SYM['W4_SEC']] == 0:
+                break
         self.assertEqual(n[self.WLEVEL0], 2)
         p1, _ = self.score_steps(n, 1200, fire=(True, False))
         self.assertTrue(p1 and set(p1) <= self.BASE_POINTS, sorted(set(p1)))
@@ -2083,23 +2214,25 @@ class TestEmulator(unittest.TestCase):
 
     def test_double_score_extra_life_and_hi_score(self):
         """Doubled points are real points: they reach the extra-life threshold
-        (every 7000) and the hi score, shown correctly in the HUD."""
-        n = self.coop_at_edges()
-        self.overdrive(n, 0)
-        n[SYM['W4_SEC']] = 30
-        self.set_score(n, 0, 6950)
-        n[SYM['LASTK']] = 6
-        n[LIVES1] = 2
-        lives = expected_lives(n)[0]
-        for k in range(6):
-            n[0x120 + k] = 0x10 if k < 2 else (5 if k == 2 else 0)        # hi 5000
-        gained = self.score_points(n, 0)
-        self.assertIn(gained, {2 * p for p in self.BASE_POINTS})
-        self.assertGreaterEqual(score(n, 0x117), 7000)
-        self.assertEqual(expected_lives(n)[0], lives + 1, 'extra life at 7000')
-        n.step(3)                                          # the copy follows in the next 2 frames
-        self.assertEqual(score(n, 0x120), score(n, 0x117), 'hi score')
-        self.assert_hud(n, 'after a doubled score')
+        (every 7000) and the hi score, shown correctly in the HUD. RC6: the
+        same in 1 PILOT."""
+        for two in (True, False):
+            n = self.game_at_edges(two)
+            self.overdrive(n, 0)
+            n[SYM['W4_SEC']] = 30
+            self.set_score(n, 0, 6950)
+            n[SYM['LASTK']] = 6
+            n[LIVES1] = 2
+            lives = expected_lives(n)[0]
+            for k in range(6):
+                n[0x120 + k] = 0x10 if k < 2 else (5 if k == 2 else 0)    # hi 5000
+            gained = self.calm_points(n, 0)
+            self.assertIn(gained, {2 * p for p in self.BASE_POINTS})
+            self.assertGreaterEqual(score(n, 0x117), 7000)
+            self.assertEqual(expected_lives(n)[0], lives + 1, 'extra life at 7000')
+            n.step(3)                                      # the copy follows in the next 2 frames
+            self.assertEqual(score(n, 0x120), score(n, 0x117), 'hi score')
+            self.assert_hud(n, f'after a doubled score, co-op {two}')
 
     def test_new_game_clears_overdrive(self):
         n = self.coop_at_edges()
@@ -2127,7 +2260,8 @@ class TestEmulator(unittest.TestCase):
             if n2[SUBSTATE] == 8:
                 break
             n2.step()
-        self.assertEqual([n2[SYM[k] + p] for k in ('W4_SEC', 'W4_USED', 'W2_OWNED') for p in (0, 1)], [0] * 6)
+        self.assertEqual([n2[SYM[k] + p] for k in ('W4_SEC', 'W4_USED', 'W2_OWNED', 'OD_PEND') for p in (0, 1)], [0] * 8)
+        self.assertEqual(n2[SYM['OD_ARM']], 0)
         self.assertEqual((n2[self.WLEVEL0], n2[self.WLEVEL0 + 1]), (0, 0))
         n2.step(10)
         self.assertEqual(self.status_row(n2)[0], '      ')
@@ -2191,7 +2325,8 @@ class TestEmulator(unittest.TestCase):
 
     def test_overdrive_aggression(self):
         """From the same moment: with P2 in overdrive the enemies start more
-        dives, dive faster and go for P2 more often than without; with no
+        dives (RC6: >= +40 % here; slot limit one level up), dive faster (RC6:
+        ~+23 %) and go for P2 more often than without; with no
         overdrive running the new hooks change nothing (identical RAM), so
         nothing stays after an overdrive ends."""
         n = self.coop_at_edges()
@@ -2207,9 +2342,9 @@ class TestEmulator(unittest.TestCase):
         self.assertEqual([n[a] for a in range(0x800)], ram_off, 'deterministic, hooks inert without overdrive')
         n.load(st)
         on = self.attack_stats(n, 60 * 90, (False, True))
-        self.assertGreaterEqual(on[0], off[0] * 1.15, f'dive launches {off[0]} -> {on[0]}')
-        self.assertGreater(on[1], off[1] * 1.08, f'dive speed {off[1]:.3f} -> {on[1]:.3f} px/frame')
-        self.assertLess(on[1], off[1] * 1.2)
+        self.assertGreaterEqual(on[0], off[0] * 1.4, f'dive launches {off[0]} -> {on[0]}')   # RC6 (RC4: 1.15)
+        self.assertGreater(on[1], off[1] * 1.18, f'dive speed {off[1]:.3f} -> {on[1]:.3f} px/frame')
+        self.assertLess(on[1], off[1] * 1.28)
         self.assertGreater(on[2], off[2] + 0.12, f'dives at P2 {off[2]:.2f} -> {on[2]:.2f}')
         self.assertGreater(on[3], off[3] + 0.2, f'shots at P2 {off[3]:.2f} -> {on[3]:.2f}')
         self.assertEqual(off, off2)
@@ -2358,7 +2493,7 @@ class TestEmulator(unittest.TestCase):
     def test_stage_counter(self):
         """Co-op HUD row 2 shows the stage being played: 01 at the start, then
         02, 03; deaths and life sharing don't change it; two digits up to 99;
-        a new game starts at 01; 1P keeps the original look (no counter)."""
+        a new game starts at 01. RC6: 1P shows it as well (test_solo_stage_counter)."""
         n = self.start(self.rom, two=True)
         n.step(10)
         self.assertEqual(self.status_row(n)[1], 'STG 01')
@@ -2393,9 +2528,9 @@ class TestEmulator(unittest.TestCase):
         self.press_select(n, p1=True)
         n.step(10)
         self.assertEqual(self.status_row(n)[1], stage, 'life sharing keeps the stage')
-        n = self.start(self.rom, two=False)               # 1P: original HUD, row 2 blank
+        n = self.start(self.rom, two=False)               # RC6: 1P shows it too (was blank)
         n.step(30)
-        self.assertEqual(set(self.status_row(n)[3]), {0x10})
+        self.assertEqual(self.status_row(n)[1], 'STG 01')
 
     # ------------------------------------------------------------ RC5: player visual identity
     # cynes RGB of the NES colours involved (measured in play)
@@ -2724,13 +2859,14 @@ class TestEmulator(unittest.TestCase):
         """Respawn shield (4 s blink) with the RC5 ships: in every frame each
         ship is either its exact picture or not drawn at all (no stray tiles,
         no mixed picture); afterwards both stay exactly as before; P1's
-        nametable rows and P2's sprites are as before the death."""
+        nametable rows and P2's sprites are as before the death. RC6: P1 in
+        1 PILOT too (no P2 drawn)."""
         import numpy as np
         arts = self.ship_art(0), self.ship_art(1)
-        for pilot in (0, 1):
-            n = self.coop_at_edges()
+        for two, pilot in ((True, 0), (True, 1), (False, 0)):
+            n = self.game_at_edges(two)
             nt0 = nametable(n)[26 * 32:28 * 32]
-            n = self.respawned(pilot)
+            n = self.respawned(pilot, two)
             shown = hidden = 0
             for i in range(300):
                 self.calm(n)
@@ -2744,7 +2880,10 @@ class TestEmulator(unittest.TestCase):
                     hidden += 1
                 else:
                     shown += 1
-                self.assertIsNotNone(self.find_ship(f, arts[1 - pilot], *places[1 - pilot]), 'partner')
+                if two:
+                    self.assertIsNotNone(self.find_ship(f, arts[1 - pilot], *places[1 - pilot]), 'partner')
+                else:
+                    self.assertFalse(p2_visible(n), '1P: no P2 sprites')
                 if sh == 0:
                     break
             self.assertGreater(hidden, 60)
@@ -2754,7 +2893,7 @@ class TestEmulator(unittest.TestCase):
                 oam = [n[P2_OAM + k] for k in range(16)]
                 places = [self.ship_place(n, p, oam) for p in (0, 1)]
                 f = np.asarray(n.step())
-                for p in (0, 1):
+                for p in ((0, 1) if two else (0,)):
                     self.assertIsNotNone(self.find_ship(f, arts[p], *places[p]), f'P{p + 1} after the shield')
             self.assertEqual(nametable(n)[26 * 32:28 * 32], nt0, 'P1 ship rows')
 
@@ -2764,21 +2903,21 @@ class TestEmulator(unittest.TestCase):
         from RAM and from the picture, also while lasers fly through the HUD."""
         g = glyphs(Path(self.rom).read_bytes())
         n = self.coop_at_edges()
-        self.overdrive(n, 0)
-        self.overdrive(n, 1)
+        self.overdrive(n, 0, 1)
         n.step(30)
         self.assert_hud(n, 'W4/W4')
         self.assert_hud_pixels(n, g, 'W4/W4')
         t1, stage, t2, _ = self.status_row(n)
         self.assertRegex(t1, r'^W4 [0-3][0-9]s$')
         self.assertRegex(t2, r'^W4 [0-3][0-9]s$')
-        self.assertEqual(stage, 'STG 01')
+        self.assertEqual(stage, 'STG 02')
         for i in range(64):                              # shots fly through the HUD rows
             self.calm(n)
             n.controller = pads(B if i % 4 < 2 else 0, B if i % 4 < 2 else 0)
             n.step()
             if i % 16 == 15:
                 n.controller = 0
+                self.hud_settled(n)                      # a kill just now reaches the HUD within 12 frames
                 self.assert_hud_pixels(n, g, f'W4/W4 firing, frame {i}')
         n.controller = 0
         self.assert_hud(n, 'W4/W4 after firing')
@@ -2826,6 +2965,953 @@ class TestEmulator(unittest.TestCase):
             prev = cur
         self.assertFalse(n.has_crashed)
         self.assertGreater(worst, 100, 'NMI handler close to overrunning the frame')
+
+
+    # ------------------------------------------------------------ RC6: 1 PILOT / co-op parity
+    MODES = ((False, '1P'), (True, 'co-op'))
+
+    def p1_w_digit(self, n, g, frames=24):
+        """P1's weapon digit in the HUD (row 3 col 3), both modes."""
+        names = {1: 1, 2: 2, 3: 3, 0x0C: 4}
+        for _ in range(frames):
+            c = read_tile(n.step(), g, 3, 3)
+            if c in names:
+                return names[c]
+        return None
+
+    def to_play(self, n, frames=600):
+        for _ in range(frames):
+            if n[SUBSTATE] == 8 and n[P1_DEAD] == 0:
+                return
+            n.step()
+        self.fail('normal play not reached')
+
+    def lose_and_restart(self, n, two):
+        """Lose the game (no reserve ships, every pilot in play hit), back to
+        the title, START again: a new game of the same mode."""
+        n[LIVES1], n[LIVES2] = 0, 0
+        for pilot in ((0, 1) if two else (0,)):
+            if (n[P1_OUT] if pilot == 0 else n[P2_STATE] == 0) or n[STATE] != 3:
+                continue
+            for _ in range(900):
+                if self.alive(n, pilot) and n[SUBSTATE] == 8:
+                    break
+                n.step()
+            n[self.SHIELD0 + pilot] = 0
+            self.kill(n, pilot)
+        for _ in range(60 * 60):
+            n.step()
+            if n[STATE] == 1:
+                break
+        self.assertEqual(n[STATE], 1, 'title after the game over')
+        n.step(60)
+        for _ in range(60):
+            if n[STATE] == 3:
+                break
+            n.controller = pads(START); n.step(6); n.controller = 0; n.step(6)
+        for _ in range(1200):
+            if n[STATE] == 3 and n[SUBSTATE] == 8 and n[P1_DEAD] == 0:
+                break
+            n.step()
+        self.assertEqual((n[STATE], n[COOP]), (3, int(two)), 'new game, same mode')
+
+    def test_parity_start(self):
+        """RC6 parity 1: both modes start alike for P1: X3 and W1 (RAM and
+        HUD), no shield, no W2 unlocked, free W2 not used, next extra life at
+        7000, the original one-time extra ship off, STG 01 on row 2."""
+        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(10)) + [0x10, 0x28, 0x6E, 0x6F, 0x0C])
+        got = {}
+        for two, name in self.MODES:
+            n = self.start(self.rom, two=two)
+            n.step(30)
+            got[name] = (expected_lives(n)[0], wait_hud_p1(n, g), n[self.WLEVEL0], self.p1_w_digit(n, g),
+                         n[self.SHIELD0], n[SYM['W2_OWNED']], n[SYM['STAGE1_DONE']], (n[0xE6], n[0xF8]),
+                         n[0x3D], self.status_row(n)[1])
+        self.assertEqual(got['1P'], got['co-op'])
+        self.assertEqual(got['1P'], (3, 3, 0, 1, 0, 0, 0, (7, 0), 0, 'STG 01'))
+
+    def test_parity_free_w2(self):
+        """RC6 parity 2: the free W2 for the first cleared stage 1 in both
+        modes: a pilot in play gets it (RAM, HUD, unlock flag); a pilot hit
+        just before the clear with a ship coming gets it and comes back with
+        it; it is given once per game (a W1 pilot later gets nothing for a
+        clear); a pilot hit on the last ship gets nothing (1P: game over);
+        a new game clears the flags and gives it again."""
+        g = glyphs(Path(self.rom).read_bytes(), tiles=[1, 2, 3, 0x0C])
+        got = {}
+        for two, name in self.MODES:
+            r = []
+            n = self.game_at_edges(two)                   # in play
+            self.clear_stage(n)
+            r.append(('in play', n[self.WLEVEL0], n[SYM['W2_OWNED']], n[SYM['STAGE1_DONE']]))
+            self.to_play(n)
+            r.append(('HUD', self.p1_w_digit(n, g)))
+            n[self.WLEVEL0], n[SYM['W2_OWNED']] = 0, 0    # once per game
+            self.clear_stage(n)
+            r.append(('second clear', n[self.WLEVEL0], n[SYM['W2_OWNED']]))
+            n = self.game_at_edges(two)                   # hit, a reserve ship coming
+            self.kill(n, 0)
+            self.clear_stage(n)
+            r.append(('exploding', n[self.WLEVEL0], n[SYM['W2_OWNED']]))
+            self.wait_back(n, 0)
+            r.append(('back', n[self.WLEVEL0], n[self.SHIELD0] > 200))
+            n = self.game_at_edges(two)                   # hit on the last ship
+            n[LIVES1] = 0
+            self.kill(n, 0)
+            for k in range(10):
+                n[0xC3 + k] = 0
+            for _ in range(900):
+                self.calm(n)
+                n.step()
+                if n[STATE] != 3 or n[P1_OUT]:
+                    break
+            r.append(('last ship', n[self.WLEVEL0], n[SYM['W2_OWNED']]))
+            self.lose_and_restart(n, two)                 # new game: flags cleared, W2 again
+            r.append(('new game', n[self.WLEVEL0], n[SYM['W2_OWNED']], n[SYM['STAGE1_DONE']]))
+            self.clear_stage(n)
+            r.append(('new game clear', n[self.WLEVEL0], n[SYM['W2_OWNED']]))
+            got[name] = r
+        self.assertEqual(got['1P'], got['co-op'])
+        self.assertEqual(got['1P'], [('in play', 1, 1, 1), ('HUD', 2), ('second clear', 0, 0), ('exploding', 1, 1),
+                                     ('back', 1, True), ('last ship', 0, 0), ('new game', 0, 0, 0),
+                                     ('new game clear', 1, 1)])
+
+    def test_parity_progression(self):
+        """RC6 parity 3-5: same thresholds in both modes once the free W2 was
+        used: W1->W2 at 2000 boost points + a cleared stage (1999 not), W2->W3
+        at 4000 more + a clear (3999 not), no W2/W3 without a clear, W3->W4 at
+        8000 no-death points (7990 + a kill: READY, RC6), never from W2,
+        never by a clear."""
+        got = {}
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            n[SYM['STAGE1_DONE']] = 1
+            st = n.save()
+            r = []
+            for level, boost in ((0, 199), (0, 200), (1, 399), (1, 400), (2, 0x3FF)):
+                n.load(st)
+                n[self.WLEVEL0], n[SYM['W2_OWNED']] = level, int(level > 0)
+                n[self.BOOST_LO0], n[self.BOOST_HI0] = boost & 0xFF, boost >> 8
+                self.run_pads(n, [0] * 60)
+                before = n[self.WLEVEL0]
+                self.clear_stage(n)
+                r.append((level, boost, before, n[self.WLEVEL0], n[self.BOOST_LO0] | n[self.BOOST_HI0] << 8,
+                          n[SYM['W2_OWNED']]))
+            for level, nodeath in ((2, 799), (1, 0x3FF)):
+                n.load(st)
+                self.to_play(n)
+                n[self.WLEVEL0], n[SYM['W2_OWNED']] = level, 1
+                n[self.NODEATH_LO0], n[self.NODEATH_HI0] = nodeath & 0xFF, nodeath >> 8
+                n[LIVES1] = 5
+                self.calm_points(n, 0)
+                r.append(('kill', level, n[self.WLEVEL0], n[SYM['W4_SEC']], n[SYM['OD_PEND']]))
+            got[name] = r
+        self.assertEqual(got['1P'], got['co-op'])
+        self.assertEqual(got['1P'], [(0, 199, 0, 0, 199, 0), (0, 200, 0, 1, 0, 1), (1, 399, 1, 1, 399, 1),
+                                     (1, 400, 1, 2, 0, 1), (2, 0x3FF, 2, 2, 0x3FF, 1),
+                                     ('kill', 2, 2, 0, 1), ('kill', 1, 1, 0, 0)])
+
+    def test_parity_overdrive(self):
+        """RC6 parity 6, 7, 9: W4 in 1P exactly as for a co-op pilot: READY by
+        points, started with the next stage: the jingle, OVERDRIVE! (1P) /
+        P1 OVERDRIVE! (co-op), W4 12s on row 2, 4 lasers, doubled points, 720
+        normal-play frames, then W3 with x1 points and the countdown gone;
+        once per life."""
+        double = {2 * p for p in self.BASE_POINTS}
+        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C, build.EXCL_TILE])
+        got = {}
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            self.overdrive(n, 0)
+            r = [n[SYM['OD_SND']] > 20, n[SYM['W4_SEC']]]
+            n.step(6)
+            r.append(self.read_row(n, g, 1).strip())
+            r.append(self.status_row(n)[0])
+            self.run_pads(n, self.presses(5))
+            r.append(self.flying(n, 0))
+            r.append(n[0x281])
+            steps, _ = self.score_steps(n, 600, fire=(True, False))
+            r.append(bool(steps) and set(steps) <= double)
+            n[SYM['W4_SEC']], n[SYM['W4_FRM']] = 12, 60
+            played = 0
+            while n[self.WLEVEL0] == 3 and played < 1000:
+                played += self.play_frames(n, 1)
+            r.append(played)
+            r.append(n[self.WLEVEL0])
+            n.step(8)
+            r.append(self.status_row(n)[0])
+            steps, _ = self.score_steps(n, 900, fire=(True, False))
+            r.append(bool(steps) and set(steps) <= self.BASE_POINTS)
+            n[self.NODEATH_LO0], n[self.NODEATH_HI0] = 900 & 0xFF, 900 >> 8
+            self.calm_points(n, 0)
+            r.append((n[self.WLEVEL0], n[SYM['OD_PEND']]))
+            got[name] = r
+        banner = {'1P': 'OVERDRIVE!', 'co-op': 'P1 OVERDRIVE!'}
+        for name in banner:
+            self.assertEqual(got[name][2], banner[name])
+            got[name][2] = 'banner'
+        self.assertEqual(got['1P'], got['co-op'])
+        self.assertEqual(got['1P'], [True, 12, 'banner', 'W4 12s', 4, 0x60, True, 720, 2, '      ', True, (2, 0)])
+
+    def test_solo_overdrive_aggression(self):
+        """RC6 parity 8: in 1P the overdrive makes the enemies attack more and
+        dive faster (same hooks as co-op), aimed at the only pilot (P1 at the
+        left edge; P2_X, unused in 1P, set to the right edge is ignored);
+        without an overdrive two runs from the same moment are identical."""
+        n = self.solo_at_edge()
+        for _ in range(60 * 20):
+            n[self.SHIELD0] = 200
+            n.step()
+        n[P2_X] = 0x60
+        st = n.save()
+        off = self.attack_stats(n, 60 * 90, (False, False))
+        ram_off = [n[a] for a in range(0x800)]
+        n.load(st)
+        off2 = self.attack_stats(n, 60 * 90, (False, False))
+        self.assertEqual([n[a] for a in range(0x800)], ram_off, 'hooks inert without overdrive')
+        self.assertEqual(off, off2)
+        n.load(st)
+        on = self.attack_stats(n, 60 * 90, (True, False))
+        self.assertGreaterEqual(on[0], off[0] * 1.4, f'dive launches {off[0]} -> {on[0]}')
+        self.assertGreater(on[1], off[1] * 1.18, f'dive speed {off[1]:.3f} -> {on[1]:.3f}')
+        self.assertLess(on[1], off[1] * 1.28)
+        self.assertLess(on[2], 0.4, f'dives heading right (away from P1): {on[2]:.2f}')
+        self.assertLess(on[3], 0.4, f'enemy shots heading right: {on[3]:.2f}')
+
+    def test_parity_death_weapon(self):
+        """RC6 parity 10: a death in both modes: W1 if W2 was never unlocked,
+        else W2 (from W2, W3 or W4 - the overdrive is cancelled); W3 progress,
+        no-death points and the overdrive reset; score, extra-life threshold
+        and the W2 unlock kept; the ship comes back on that level, shielded."""
+        got = {}
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            self.set_score(n, 0, 12340)
+            n[0xE6] = 14
+            st = n.save()
+            r = []
+            for owned, level in ((0, 0), (1, 1), (1, 2), (1, 3)):
+                n.load(st)
+                n[SYM['W2_OWNED']], n[self.WLEVEL0] = owned, level
+                n[self.BOOST_LO0], n[self.NODEATH_LO0] = 150, 200
+                n[SYM['W4_SEC']], n[SYM['W4_USED']] = (20, 1) if level == 3 else (0, 0)
+                self.kill(n, 0)
+                n.step(2)
+                r.append((owned, level, n[self.WLEVEL0], n[self.BOOST_LO0], n[self.NODEATH_LO0], n[SYM['W4_SEC']],
+                          n[SYM['W4_USED']], score(n, 0x117), n[0xE6], n[SYM['W2_OWNED']]))
+                self.wait_back(n, 0)
+                r.append(('back', n[self.WLEVEL0], n[self.SHIELD0] > 200))
+            got[name] = r
+        self.assertEqual(got['1P'], got['co-op'])
+        self.assertEqual([x for x in got['1P'] if x[0] != 'back'],
+                         [(0, 0, 0, 0, 0, 0, 0, 12340, 14, 0), (1, 1, 1, 0, 0, 0, 0, 12340, 14, 1),
+                          (1, 2, 1, 0, 0, 0, 0, 12340, 14, 1), (1, 3, 1, 0, 0, 0, 0, 12340, 14, 1)])
+        self.assertEqual([x for x in got['1P'] if x[0] == 'back'],
+                         [('back', 0, True), ('back', 1, True), ('back', 1, True), ('back', 1, True)])
+
+    def test_parity_extra_lives(self):
+        """RC6 parity 12: +1 life at 7000, 14000, 21000 in both modes (each
+        once), none at 9 lives; the original one-time extra ship (at 5000,
+        $3D) never comes; the HUD shows the count."""
+        g = glyphs(Path(self.rom).read_bytes())
+        got = {}
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            n[LIVES1] = 2
+            r = []
+            for start in (4990, 6990, 13990, 20990, 21500):
+                self.set_score(n, 0, start)
+                n[SYM['LASTK']] = start // 1000
+                before = expected_lives(n)[0]
+                self.calm_points(n, 0)
+                r.append((start, expected_lives(n)[0] - before))
+            n.step(16)
+            r.append(('HUD', wait_hud_p1(n, g) == expected_lives(n)[0]))
+            n[LIVES1] = 8                                   # 9 in all: the cap
+            self.set_score(n, 0, 27990)
+            n[SYM['LASTK']] = 27
+            self.calm_points(n, 0)
+            r.append(('cap', expected_lives(n)[0], n[0xE6]))
+            got[name] = r
+        self.assertEqual(got['1P'], got['co-op'])
+        self.assertEqual(got['1P'], [(4990, 0), (6990, 1), (13990, 1), (20990, 1), (21500, 0), ('HUD', True),
+                                     ('cap', 9, 35)])
+
+    def test_solo_stage_counter(self):
+        """RC6 parity 13: 1 PILOT shows STG nn like co-op (same routine): 01,
+        02, 03 after clears, kept after a death, 99 then 01 (the game's wrap);
+        the original stage flags (rows 3-4, E8B2) stay and always agree with
+        it (one flag per stage, from stage 6 one flag and the number)."""
+        n = self.start(self.rom, two=False)
+        n.step(10)
+        self.assertEqual(self.status_row(n)[1], 'STG 01')
+        self.assert_hud(n, 'stage 1')
+        for want in ('STG 02', 'STG 03', 'STG 04', 'STG 05', 'STG 06', 'STG 07'):
+            n[LIVES1] = 3
+            self.clear_stage(n)
+            self.to_play(n)
+            n.step(10)
+            self.assertEqual(self.status_row(n)[1], want)
+            self.assert_hud(n, want)
+        self.kill(n, 0)
+        self.wait_back(n, 0)
+        n.step(10)
+        self.assertEqual(self.status_row(n)[1], 'STG 07', 'a death keeps the stage')
+        n[0x59] = 98
+        n.step(10)
+        self.assertEqual(self.status_row(n)[1], 'STG 99')
+        self.clear_stage(n)
+        self.to_play(n)
+        n.step(10)
+        self.assertEqual(self.status_row(n)[1], 'STG 01')
+        self.assert_hud(n, 'after 99')
+        row = self.status_row(n)[3]
+        self.assertEqual(set(row[:13]) | set(row[19:]), {0x10}, 'nothing else on row 2')
+
+    def test_solo_hud_pause_and_game_over(self):
+        """RC6 parity 14: 1 PILOT HUD after real play: score, hi score, Xn, Wn,
+        STG and the W4 countdown agree with RAM (cells and pixels), also in
+        pause (the countdown stops) and after it; at GAME OVER the score row
+        stays, and the title's score row afterwards holds digits and blanks."""
+        g = glyphs(Path(self.rom).read_bytes())
+        n = self.start(self.rom, two=False)
+        for i in range(900):
+            n[LIVES1] = 3
+            n.controller = pads(B if i % 6 < 2 else 0)
+            n.step()
+        n.controller = 0
+        self.overdrive(n, 0)
+        self.set_score(n, 0, 4140)
+        n[SYM['SCORE_NEW']] = 2
+        self.assert_hud(n, '1P W4')
+        self.assert_hud_pixels(n, g, '1P W4')
+        self.assertRegex(self.status_row(n)[0], r'^W4 [0-3][0-9]s$')
+        self.assertEqual(self.status_row(n)[1], 'STG 02')
+        n.controller = pads(START); n.step(); n.controller = 0
+        n.step(8)
+        timer = self.status_row(n)[0]
+        sec = n[SYM['W4_SEC']], n[SYM['W4_FRM']]
+        n.step(120)
+        self.assertEqual((n[SYM['W4_SEC']], n[SYM['W4_FRM']]), sec, 'paused: countdown stops')
+        self.assert_hud(n, 'paused')
+        self.assert_hud_pixels(n, g, 'paused')
+        self.assertEqual(self.status_row(n)[:2], (timer, 'STG 02'))
+        n.controller = pads(START); n.step(); n.controller = 0
+        n.step(30)
+        self.assert_hud(n, 'resumed')
+        n[LIVES1] = 0
+        n[self.SHIELD0] = 0
+        self.kill(n, 0)
+        row = [n[0x117 + k] for k in range(6)]          # its shots are gone: no more points
+        over = False
+        for _ in range(60 * 30):
+            n.step()
+            if n[STATE] == 4 and not over:
+                over = True
+                self.assertEqual([n[0x117 + k] for k in range(6)], row, 'score kept at GAME OVER')
+                self.assertEqual(list(nametable(n)[128 + 4:128 + 10]), row, 'HUD score at GAME OVER')
+            if n[STATE] == 1:
+                break
+        self.assertTrue(over)
+        self.assertEqual(n[STATE], 1)
+        n.step(30)
+        title = list(nametable(n, 1)[4 * 32 + 3:4 * 32 + 29])
+        self.assertTrue(all(t == 0x10 or t <= 9 for t in title), [hex(t) for t in title])
+
+    def test_solo_no_p2_in_overdrive(self):
+        """RC6 parity 15: 1 PILOT with P1 in overdrive and shielded at times,
+        pad 2 mashing every button: P2 never gets a shot (RAM and OAM), a
+        sprite, points, a weapon level, a shield or a state; no lag frame."""
+        rnd = random.Random(4)
+        n = self.start(self.rom, two=False)
+        lag = n[SYM['LAG_TOTAL']]
+        hidden = (0x2A0, 0x2A4, 0x2A8, 0x2AC, 0x2B0, 0x2B4, 0x2B8, 0x2C8)
+        for i in range(60 * 60 * 2):
+            n[self.WLEVEL0], n[SYM['W4_SEC']] = 3, 30
+            n[LIVES1] = max(n[LIVES1], 3)
+            if i % 600 == 0:
+                n[self.SHIELD0] = 240
+            n.controller = pads(rnd.choice([0, LEFT, RIGHT]) | (B if i % 4 < 2 else 0), rnd.randrange(256))
+            n.step()
+            if n[STATE] != 3:
+                break
+            self.assertEqual([n[self.BUL_Y0 + 4 + k] for k in range(4)], [0] * 4, f'frame {i}: P2 shot')
+            self.assertTrue(all(n[a] >= 0xEF for a in hidden), f'frame {i}: P2 sprite')
+            self.assertEqual((n[P2_STATE], n[self.WLEVEL0 + 1], n[self.SHIELD0 + 1], n[SYM['W4_SEC'] + 1]),
+                             (0, 0, 0, 0))
+        self.assertEqual(n[STATE], 3)
+        self.assertGreater(score(n, 0x117), 0)
+        self.assertEqual(score(n, 0x129), 0, 'no P2 points')
+        self.assertEqual(n[SYM['LAG_TOTAL']], lag, 'no lag frames')
+
+    def test_parity_shots(self):
+        """RC6 parity 17: P1's shots per level identical in 1P and co-op:
+        frames to the shot, Y in every frame of the flight (speed), X kept,
+        number of slots filled by rapid presses, tile and palette."""
+        got = {}
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            st = n.save()
+            r = []
+            for level in range(4):
+                n.load(st)
+                n[self.WLEVEL0], n[SYM['W4_SEC']] = level, 30 if level == 3 else 0
+                r.append(self.shot_profile(n, 0))
+                n.load(st)
+                n[self.WLEVEL0], n[SYM['W4_SEC']] = level, 30 if level == 3 else 0
+                shots = self.run_pads(n, self.presses(level + 3))[0]
+                r.append((len(shots), self.flying(n, 0), n[0x281], n[0x282]))
+            got[name] = r
+        self.assertEqual(got['1P'], got['co-op'])
+        flights = [len(got['1P'][2 * lv][1]) for lv in range(4)]
+        self.assertEqual(flights, [50, 46, 42, 32])
+        self.assertEqual([got['1P'][2 * lv + 1][:2] for lv in range(4)], [(1, 1), (2, 2), (3, 3), (4, 4)])
+
+    def test_solo_w4_stress_no_overrun(self):
+        """RC6 performance: 1 PILOT on W4 with the overdrive and its aggression
+        kept on, firing, shield on half of the time (blinking), 2 min: no
+        reset, no lag frame, idle margin > 0."""
+        rnd = random.Random(9)
+        n = self.start(self.rom, two=False)
+        prev = idle_counter(n)
+        worst = 1 << 16
+        lag = n[SYM['LAG_TOTAL']]
+        for i in range(60 * 60 * 2):
+            n[self.WLEVEL0], n[SYM['W4_SEC']] = 3, 30
+            n[LIVES1] = max(n[LIVES1], 3)
+            if (i // 600) % 2:
+                n[self.SHIELD0] = max(n[self.SHIELD0], 120)
+            fire = B if (i // 3) % 2 == 0 else 0
+            n.controller = pads(fire | rnd.choice([0, LEFT, RIGHT]))
+            state = n[STATE]
+            n.step()
+            self.assertFalse(state == 3 and n[STATE] in (0, 1), 'NMI overrun reset the game')
+            cur = idle_counter(n)
+            if n[STATE] == 3:
+                worst = min(worst, (cur - prev) & 0xFFFF)
+            prev = cur
+        self.assertGreater(worst, 0)
+        self.assertEqual(n[SYM['LAG_TOTAL']], lag, 'no lag frames')
+
+
+    # ------------------------------------------------------------ RC6: overdrive READY -> next stage
+    def to_stage_start(self, n):
+        """Clear the stage and stop right before F0, the first frame of the
+        next stage with its formation drawn (~21 frames after the first
+        normal-play frame); returns the frames from FE = 8 to there."""
+        stage = n[0x59]
+        for k in range(10):
+            n[0xC3 + k] = 0
+        for k in range(8):
+            n[0x738 + k] = 0
+        for _ in range(900):
+            n[LIVES1], n[LIVES2] = max(n[LIVES1], 2), max(n[LIVES2], 2)
+            n.step()
+            if n[0x59] != stage and n[SUBSTATE] == 8:
+                break
+        for k in range(60):
+            st = n.save()
+            n.step()
+            if not n[SYM['OD_ARM']]:
+                n.load(st)
+                return k + 1
+        self.fail('no F0')
+
+    @staticmethod
+    def row_text(n, row):
+        """Nametable row as text (no stars in the way, unlike the picture)."""
+        names = {**{i: str(i) for i in range(10)}, 0x10: ' ', 0x0A: '1', 0x0B: '2', 0x0C: '4',
+                 build.EXCL_TILE: '!', build.SECONDS_TILE: 's', **{0x11 + i: chr(65 + i) for i in range(26)}}
+        return ''.join(names.get(t, '?') for t in nametable(n)[32 * row:32 * row + 32]).strip()
+
+    @staticmethod
+    def ee52_target(x, ship):
+        """Dive target EE52 computes for a diver at x aiming at ship x `ship`
+        (SHIP_X convention): half the distance, 48..112 px, clamped to 8 / $F0."""
+        s = ship + 0x78
+        r = (s & 0xFF) - x - (0 if s > 0xFF else 1)
+        a = max(0x30, min(0x70, (r if r >= 0 else -r) >> 1))
+        if r >= 0:
+            t = (x + a) & 0xFF
+            return 0xF0 if x + a < 0x100 and t >= 0xF8 else t
+        return x - a if x - a >= 0 else 8
+
+    def aimed_at(self, n, k):
+        """'P1' / 'P2': whose position diver k's dive target was computed from
+        (None if both give the same target)."""
+        x, t = n[0x203 + 16 * k], n[0x740 + k]
+        t1, t2 = self.ee52_target(x, n[SHIP_X]), self.ee52_target(x, n[P2_X])
+        if t1 == t2:
+            return None
+        return 'P1' if t == t1 else 'P2' if t == t2 else '?'
+
+    @staticmethod
+    def enemy_ram(n):
+        """Enemy state: diver tables $0700-$0747 / $0788-$07FF (not the VRAM
+        queue $0748-$0787, which carries HUD text), enemy and diver sprites,
+        enemy bullets, attack counters and timers $5B-$67."""
+        return [n[a] for a in list(range(0x700, 0x748)) + list(range(0x788, 0x800)) + list(range(0x200, 0x280))
+                + list(range(0x284, 0x2A0)) + list(range(0x5B, 0x68))]
+
+    def test_ready_waits_for_next_stage(self):
+        """RC6 1-3: READY (W3 + 8000 no-death points) changes nothing until
+        the stage ends: W3 shots (3 slots, 120 %), x1 points, no countdown, no
+        aggression (the hooks see no overdrive: two runs, READY or not, give
+        the same enemies), W4 RDY on row 2; 1P: OVERDRIVE READY NEXT STAGE."""
+        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C])
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            self.ready(n, 0)
+            n.step(6)
+            want = 'OVERDRIVE READY NEXT STAGE' if not two else 'P1 W4 READY NEXT STAGE'
+            self.assertEqual(self.read_row(n, g, 1).strip(), want)
+            st = n.save()
+            steps, _ = self.score_steps(n, 900, fire=(True, False))
+            self.assertTrue(steps and set(steps) <= self.BASE_POINTS, f'{name}: x1 while READY {sorted(set(steps))}')
+            self.assertEqual((n[self.WLEVEL0], n[SYM['W4_SEC']], n[SYM['OD_PEND']]), (2, 0, 1))
+            self.assertEqual(self.status_row(n)[0], 'W4 RDY')
+            self.assert_hud(n, f'{name} READY')
+            enemies = []
+            for pend in (1, 0):
+                n.load(st)
+                n[SYM['OD_PEND']] = pend
+                for i in range(600):
+                    n[self.SHIELD0] = 200
+                    n[LIVES1] = 5
+                    n.step()
+                enemies.append(self.enemy_ram(n))
+            self.assertEqual(enemies[0], enemies[1], f'{name}: READY gives no aggression')
+
+    def test_overdrive_counter_attack_frames(self):
+        """RC6 CRITICAL, frame by frame, 1P and co-op: F0 = the first frame of
+        the next stage with the enemies on screen - the game draws the new
+        formation column by column in its first ~21 frames of play; F0 is the
+        frame its last column is drawn (the frame before, one is missing): W4
+        on (12 s, first frame counted), x2, the jingle starts, and 3 aliens
+        leave the formation (diver state 0 -> 1: the stage's first attack,
+        launched by the game's own routine) - the original attack timer would
+        launch the first one only ~4 s later (same state without READY:
+        nothing in 200 frames). F1: the picture shows OVERDRIVE! on row 1 and
+        the divers' sprites; F1-F3 they move every frame. The next three dive
+        targets go to the W4 pilot."""
+        import numpy as np
+        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C, build.EXCL_TILE])
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            self.ready(n, 0)
+            wait = self.to_stage_start(n)
+            self.assertLessEqual(wait, 24, f'{name}: F0 {wait} frames after the first frame of play')
+            st = n.save()
+            self.assertEqual([n[0x738 + k] for k in range(8)], [0] * 8)
+            self.assertEqual(n[self.WLEVEL0], 2)
+            cells = lambda: sum(1 for b in nametable(n)[5 * 32:14 * 32] if b != 0x10)
+            before = cells()
+            frame0 = np.asarray(n.step())                  # F0
+            self.assertGreater(cells(), before, 'the last formation column drawn in F0')
+            self.assertTrue(frame0[60:110].any(), 'formation on screen in F0')
+            self.assertEqual((n[self.WLEVEL0], n[SYM['W4_SEC']], n[SYM['W4_FRM']]), (3, 12, 59), name)
+            self.assertEqual(n[SYM['OD_SND']], 28, 'jingle started in F0')
+            launched = [k for k in range(7) if n[0x738 + k] == 1]
+            self.assertEqual(len(launched), 3, f'{name}: divers launched in F0 {launched}')
+            pos = {k: (n[0x200 + 16 * k], n[0x203 + 16 * k]) for k in launched}
+            for f in (1, 2, 3):
+                frame = np.asarray(n.step())
+                if f == 1:
+                    row = self.read_row(n, g, 1, frames=1)
+                    self.assertEqual(row.strip(), 'OVERDRIVE!' if not two else 'P1 OVERDRIVE!', f'{name} F1 message')
+                for k in launched:
+                    now = (n[0x200 + 16 * k], n[0x203 + 16 * k])
+                    self.assertNotEqual(now, pos[k], f'{name} F{f}: diver {k} moves')
+                    y, x = pos[k]                          # the sprite drawn in this frame (OAM of F{f-1})
+                    self.assertTrue(frame[y + 1:y + 9, x:x + 8].any(), f'{name} F{f}: diver {k} drawn')
+                    pos[k] = now
+            targets = []
+            for _ in range(120):                           # launch arcs end: dives aimed (EE4E)
+                was = [n[0x738 + k] for k in launched]
+                n[self.SHIELD0] = 200
+                n.step()
+                for k, w in zip(launched, was):
+                    if w == 1 and n[0x738 + k] == 2:
+                        targets.append(self.aimed_at(n, k) if two else
+                                       n[0x740 + k] == self.ee52_target(n[0x203 + 16 * k], n[SHIP_X]))
+            self.assertEqual(targets, ['P1'] * 3 if two else [True] * 3, f'{name}: the three dives aimed at P1')
+            m = NES(self.rom)                              # without READY: the original attack timer
+            m.load(st)
+            m[SYM['OD_PEND']] = 0
+            first = None
+            for i in range(400):
+                m[self.SHIELD0] = 200
+                m.step()
+                if first is None and any(m[0x738 + k] for k in range(7)):
+                    first = i
+            self.assertEqual(m[self.WLEVEL0], 2)
+            self.assertGreater(first, 200, f'{name}: first normal attack at frame {first}')
+
+    def test_overdrive_both_pilots_counter_attack(self):
+        """RC6: both pilots READY: both start in the same frame, one jingle,
+        P1 P2 OVERDRIVE!, the counter-attack dives go to both (alternately)."""
+        n = self.coop_at_edges()
+        self.ready(n, 0)
+        self.ready(n, 1)
+        n[SHIP_X], n[P2_X] = 0xC0, 0x40                    # apart: every target tells whom it is for
+        self.to_stage_start(n)
+        n.step()
+        self.assertEqual([n[self.WLEVEL0], n[self.WLEVEL0 + 1], n[SYM['W4_SEC']], n[SYM['W4_SEC'] + 1]], [3, 3, 12, 12])
+        launched = [k for k in range(7) if n[0x738 + k] == 1]
+        self.assertEqual(len(launched), 3)
+        dirs = []
+        for _ in range(120):
+            was = [n[0x738 + k] for k in launched]
+            n[self.SHIELD0] = n[self.SHIELD0 + 1] = 200
+            n.step()
+            for k, w in zip(launched, was):
+                if w == 1 and n[0x738 + k] == 2:
+                    dirs.append(self.aimed_at(n, k))
+        self.assertEqual(sorted(dirs), ['P1', 'P2', 'P2'], 'split: P2, P1, P2 (AimDiver alternates)')
+
+    def test_ready_cancelled(self):
+        """RC6 7: a death before the next stage cancels READY (no W4 at the
+        next stage, row 2 blank); a Life Sharing revive doesn't bring it back;
+        a game over before the next stage starts nothing; a new game clears it."""
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            n[SYM['STAGE1_DONE']] = 1                      # (no free W2 at this clear)
+            self.ready(n, 0)
+            self.kill(n, 0)
+            self.assertEqual(n[SYM['OD_PEND']], 0, name)
+            self.wait_back(n, 0)
+            self.next_stage(n)
+            self.assertEqual((n[self.WLEVEL0], n[SYM['W4_SEC']], n[SYM['OD_PEND']]), (0, 0, 0), name)
+            n.step(8)
+            self.assertEqual(self.status_row(n)[0], '      ')
+        n = self.p1_out_p2_playing(p2_reserve=2)           # READY, out, revived: not READY again
+        n[SYM['OD_PEND']] = 1                              # (as if READY when its last ship was hit)
+        self.press_select(n, p2=True)
+        self.assertEqual((n[P1_OUT], n[SYM['OD_PEND']]), (0, 0))
+        n = self.solo_at_edge()                            # game over while READY
+        self.ready(n, 0)
+        self.lose_and_restart(n, False)
+        self.assertEqual((n[SYM['OD_PEND']], n[SYM['OD_ARM']], n[self.WLEVEL0]), (0, 0, 0))
+        self.next_stage(n)
+        self.assertEqual((n[self.WLEVEL0], n[SYM['W4_SEC']]), (1, 0), 'new game: free W2, no overdrive')
+
+    def test_ready_on_the_last_kill(self):
+        """RC6 5: the shot that clears the stage also makes the pilot READY:
+        W4 starts with the next stage."""
+        for two, name in self.MODES:
+            n = self.game_at_edges(two)
+            n[self.WLEVEL0] = 2
+            n[self.NODEATH_LO0], n[self.NODEATH_HI0] = 799 & 0xFF, 799 >> 8
+            for k in range(10):                            # one alien left: column 0, bottom row
+                n[0xC3 + k] = 1 if k == 0 else 0
+            stage = n[0x59]
+            hit = None
+            for i in range(1500):
+                for k in range(7):                         # no enemy bullets; the last alien may
+                    n[0x284 + 4 * k] = 0                   # dive: shielded, P1 shoots it there
+                n[self.SHIELD0] = 200
+                n[LIVES1] = 5
+                n.controller = pads((B if i % 4 < 2 else 0) | (LEFT if (i // 150) % 2 else RIGHT))
+                was = n[SYM['OD_PEND']]
+                n.step()
+                if not was and n[SYM['OD_PEND']]:
+                    hit = i
+                    self.assertFalse(any(n[0xC3 + k] for k in range(10)), 'READY by the last alien')
+                if n[0x59] != stage:
+                    break
+            n.controller = 0
+            self.assertIsNotNone(hit, f'{name}: never READY')
+            self.assertNotEqual(n[0x59], stage)
+            self.next_stage(n)                             # (the stage change is under way: F0)
+            self.assertEqual((n[self.WLEVEL0], n[SYM['W4_SEC']]), (3, 12), name)
+
+    def test_overdrive_once_per_activation(self):
+        """RC6 12-14, 16: one jingle and one OVERDRIVE! per start (the
+        following stage change starts nothing); the aggression is full from
+        F0 (attack counters 6 steps per 16 frames from the start; dive boost
+        from the first diving frame), none after the end: from the moment it
+        ends, two runs - with or without the overdrive's history - drive the
+        enemies identically."""
+        g = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C, build.EXCL_TILE])
+        n = self.solo_at_edge()
+        self.ready(n, 0)
+        self.to_stage_start(n)
+        counters = [n[0x5B + k] for k in range(8)]
+        jingles = shown = 0
+        prev_snd, prev_row = 0, ''
+        for i in range(16):
+            n[self.SHIELD0] = 200
+            n.step()
+            jingles += n[SYM['OD_SND']] > prev_snd
+            prev_snd = n[SYM['OD_SND']]
+        steps = [(n[0x5B + k] - counters[k]) & 0xFF for k in range(8)]
+        self.assertTrue(all(st in (6, 1, 2, 3, 4, 5) for st in steps), steps)
+        self.assertIn(6, steps, f'6 counter steps in the first 16 frames {steps}')
+        played = 16
+        while n[self.WLEVEL0] == 3:
+            n[self.SHIELD0] = 200
+            n[LIVES1] = 5
+            n.step()
+            jingles += n[SYM['OD_SND']] > prev_snd
+            prev_snd = n[SYM['OD_SND']]
+            row = self.row_text(n, 1)
+            shown += row == 'OVERDRIVE!' and prev_row != 'OVERDRIVE!'
+            prev_row = row
+            played += n[SUBSTATE] == 8
+        self.assertEqual((jingles, shown), (1, 1))
+        end = n.save()
+        self.next_stage(n)
+        self.assertEqual((n[self.WLEVEL0], n[SYM['OD_SND']]), (2, 0), 'no second start')
+        runs = []
+        for wipe in (False, True):
+            n.load(end)
+            if wipe:
+                for k in ('W4_USED', 'OD_PEND'):
+                    n[SYM[k]] = 0
+                n[SYM['OD_ARM']] = n[SYM['OD_MSG']] = 0
+            for _ in range(900):
+                n[self.SHIELD0] = 200
+                n[LIVES1] = 5
+                n.step()
+            runs.append(self.enemy_ram(n))
+        self.assertEqual(runs[0], runs[1], 'no aggression left after the overdrive')
+
+    def test_ready_hud(self):
+        """RC6 22: the HUD while READY and while active, co-op with P1 READY
+        and P2 active and the reverse: rows 3-4 exactly as RAM requires (scores,
+        lives, Wn), row 2 W4 RDY / W4 nns / STG nn in their own cells, nothing
+        else on rows 0-2; the revive prompt still shown when due."""
+        g = glyphs(Path(self.rom).read_bytes())
+        n = self.coop_at_edges()
+        self.overdrive(n, 1)
+        n[self.WLEVEL0], n[SYM['OD_PEND']] = 2, 1          # P1 READY (as by points)
+        n.step(8)
+        p1, stage, p2, row = self.status_row(n)
+        self.assertEqual(p1, 'W4 RDY')
+        self.assertRegex(p2, r'^W4 [01][0-9]s$')
+        self.assertEqual(stage, 'STG 02')
+        self.assert_hud(n, 'P1 READY, P2 W4')
+        self.assert_hud_pixels(n, g, 'P1 READY, P2 W4')
+        nt = nametable(n)
+        allowed = {0x10, 0x27, 0x0C, 0x22, 0x14, 0x29, 0x23, 0x24, 0x17, build.SECONDS_TILE} | set(range(10))
+        self.assertEqual(set(nt[64:96]) - allowed, set(), 'row 2')
+        self.assertEqual(set(nt[0:64]) - {0x10} - set(range(0x11, 0x2B)) - {0x0A, 0x0B, 0x0C, build.EXCL_TILE}, set())
+        n = self.p1_out_p2_playing(p2_reserve=2)           # prompt and READY together
+        self.ready(n, 1)
+        n.step(200)                                        # the READY message (2 s) is over
+        rg = glyphs(Path(self.rom).read_bytes(), tiles=list(range(0x10, 0x2B)) + [0x0A, 0x0B, 0x0C])
+        self.assertEqual(self.read_row(n, rg, 1).strip(), 'P2 SELECT TO REVIVE P1')
+        self.assertEqual(self.status_row(n)[2], 'W4 RDY')
+
+
+    # ------------------------------------------------------------ RC6: 1P HUD regressions (manual test report)
+    def menu_start(self, n, two):
+        """From a running game or the title: back to the title (game over),
+        choose the mode with SELECT, START: a new game, no emulator restart."""
+        for _ in range(60 * 60):                           # game over: last ships, shot at
+            if n[STATE] != 3:
+                break
+            n[LIVES1], n[LIVES2] = 0, 0
+            n[self.SHIELD0] = n[self.SHIELD0 + 1] = 0
+            for pilot, k in ((0, 0), (1, 1)):
+                if self.alive(n, pilot) and not n[0x284 + 4 * k]:
+                    x = n[SHIP_X] if pilot == 0 else n[P2_X]
+                    n[0x284 + 4 * k], n[0x287 + 4 * k] = 0xC4, (x + 0x7C) & 0xFF
+            n.step()
+        for _ in range(60 * 60):
+            if n[STATE] == 1:
+                break
+            n.step()
+        self.assertEqual(n[STATE], 1, 'title')
+        n.step(60)
+        for _ in range(40):
+            if (n[0x31] & 1) == two:
+                break
+            n.controller = pads(SELECT); n.step(6); n.controller = 0; n.step(6)
+        for _ in range(60):
+            if n[STATE] == 3:
+                break
+            n.controller = pads(START); n.step(6); n.controller = 0; n.step(6)
+        for _ in range(1200):
+            if n[STATE] == 3 and n[SUBSTATE] == 8 and n[P1_DEAD] == 0:
+                break
+            n.step()
+        self.assertEqual((n[STATE], n[COOP]), (3, int(two)))
+
+    def hud_right(self, n):
+        nt = nametable(n)
+        return list(nt[96 + 20:128]), list(nt[128 + 20:160])
+
+    def check_mode_hud(self, n, g, msg):
+        """HUD rows 2-4 exactly as RAM requires for the mode (1P: the original
+        stage flags right, nothing of P2; co-op: P2's fields), in the
+        nametable and in the picture; STG on row 2. (Shots in flight are
+        removed first: a hit meanwhile would change the score under test.)"""
+        n.controller = 0
+        for k in range(8):
+            n[self.BUL_Y0 + k] = 0
+        self.calm(n)
+        n.step(16)
+        self.assert_hud(n, msg)
+        self.assert_hud_pixels(n, g, msg)
+        self.assertEqual(self.status_row(n)[1], 'STG %02d' % (n[0x59] + 1), msg)
+        if not n[COOP]:
+            self.assertEqual(self.hud_right(n), tuple(self.solo_flags(n)), msg + ': right part')
+            blank = {}
+            for _ in range(40):                            # P2's cells in co-op: blank in the picture
+                oam = [n[0x200 + k] for k in range(256)]   # (cells under a sprite this frame skipped)
+                f = n.step()
+                boxes = [(oam[k], oam[k + 3]) for k in range(0, 256, 4) if oam[k] < 0xEF]
+                for col in (20, 21, 22, 23, 24, 30, 31):
+                    for row in (3, 4):
+                        y, x = 8 * row + 1, 8 * col
+                        if any(by + 1 < y + 8 and y < by + 9 and bx < x + 8 and x < bx + 8 for by, bx in boxes):
+                            continue
+                        self.assertFalse(f[y:y + 8, x:x + 8].any(), f'{msg}: picture row {row} col {col}')
+                        blank[(row, col)] = True
+            self.assertEqual(len(blank), 14, f'{msg}: some cell always under a sprite')
+
+    def test_mode_switch_hud(self):
+        """manual test report (BUG 1): after a co-op game, a 1 PILOT game showed
+        P2's leftovers on the right of the HUD (the "U" of 2UP, a score digit,
+        P2's W and X digits: cols 24 and 30) - the HUD buffer kept CoopHud's
+        cells. Now, without restarting the emulator: 1P fresh -> 2P -> 1P ->
+        2P -> 1P -> 1P, every game's HUD exactly as for its mode (nametable,
+        picture, STG 01), 1P's right part the same as in a fresh 1P game."""
+        g = glyphs(Path(self.rom).read_bytes())
+        n = NES(self.rom)
+        n.step(150)
+        fresh = None
+        for i, two in enumerate((False, True, False, True, False, False)):
+            self.menu_start(n, two)
+            for j in range(600):                           # some play: points, dives, P2 scores
+                n[LIVES1], n[LIVES2] = 3, 3
+                n.controller = pads(B if j % 6 < 2 else 0, B if j % 6 < 3 else 0)
+                n.step()
+            n.controller = 0
+            self.calm(n)
+            self.check_mode_hud(n, g, f'game {i + 1} ({"co-op" if two else "1P"})')
+            if not two:
+                if fresh is None:
+                    fresh = self.hud_right(n)
+                self.assertEqual(self.hud_right(n), fresh, f'game {i + 1}: 1P right part as in a fresh 1P game')
+
+    def test_solo_long_game_hud(self):
+        """manual test report (BUG 1, BUG 2), 1 PILOT after a co-op game: stages 1-4
+        (STG 01 -> 04), score over 10000 and 20000, extra lives, W2, W3,
+        overdrive READY and active (x2) with the stage counter on screen, a
+        death with the shield and back on W2, GAME OVER and the title. In
+        every frame the right part of rows 3-4 holds only the original stage
+        flags (no P2 leftovers, no stray tile); at each step the whole HUD
+        equals RAM (nametable and picture)."""
+        g = glyphs(Path(self.rom).read_bytes())
+        n = NES(self.rom)
+        n.step(150)
+        self.menu_start(n, True)                           # a co-op game first
+        for j in range(900):
+            n[LIVES1], n[LIVES2] = 3, 3
+            n.controller = pads(B if j % 6 < 2 else 0, B if j % 6 < 3 else 0)
+            n.step()
+        n.controller = 0
+        self.menu_start(n, False)
+
+        def play(frames, fire=True):
+            for j in range(frames):
+                n[LIVES1] = max(n[LIVES1], 2)
+                self.calm(n)
+                n.controller = pads((B if fire and j % 4 < 2 else 0) | (LEFT if (j // 150) % 2 else RIGHT))
+                n.step()
+                right = set(self.hud_right(n)[0] + self.hud_right(n)[1])
+                self.assertTrue(right <= {0x10, 0x6C, 0x6D} | set(range(10)), f'stray tile {right}')
+                r3, r4 = self.hud_right(n)                 # P2's cells in co-op (cols 20-24, 30-31)
+                self.assertEqual([r3[c] for c in (0, 1, 2, 3, 4, 10, 11)] + [r4[c] for c in (0, 1, 2, 3, 4, 10, 11)],
+                                 [0x10] * 14, 'P2 leftovers')
+            n.controller = 0
+
+        self.check_mode_hud(n, g, 'stage 1')
+        self.clear_stage(n)                                # stage 1: free W2
+        self.to_play(n)
+        play(60)
+        self.assertEqual(n[self.WLEVEL0], 1)
+        self.check_mode_hud(n, g, 'stage 2, W2')
+        self.set_score(n, 0, 9990)
+        n[SYM['LASTK']] = 9
+        lives = expected_lives(n)[0]
+        self.calm_points(n, 0)                             # over 10000
+        self.assertGreaterEqual(score(n, 0x117), 10000)
+        self.check_mode_hud(n, g, 'over 10000')
+        n[self.BOOST_LO0], n[self.BOOST_HI0] = 400 & 0xFF, 400 >> 8
+        self.clear_stage(n)                                # W3
+        self.to_play(n)
+        self.assertEqual(n[self.WLEVEL0], 2)
+        self.check_mode_hud(n, g, 'stage 3, W3')
+        self.ready(n, 0)                                   # READY with STG on screen
+        n.step(8)
+        self.assertEqual(self.status_row(n)[:2], ('W4 RDY', 'STG 03'))
+        self.check_mode_hud(n, g, 'READY')
+        self.next_stage(n)                                 # stage 4: overdrive, x2
+        n.step(8)
+        self.assertEqual(self.status_row(n)[1], 'STG 04')
+        self.assertRegex(self.status_row(n)[0], r'^W4 1[0-2]s$')
+        self.set_score(n, 0, 20950)
+        n[SYM['LASTK']] = 20
+        gained = self.calm_points(n, 0)
+        self.assertIn(gained, {2 * p for p in self.BASE_POINTS})
+        self.assertGreaterEqual(score(n, 0x117), 21000)
+        self.assertGreater(expected_lives(n)[0], lives, 'extra lives (14000, 21000)')
+        self.check_mode_hud(n, g, 'overdrive, over 20000')
+        play(120)
+        n[self.SHIELD0] = 0
+        self.kill(n, 0)                                    # death: shield, back on W2
+        self.wait_back(n, 0)
+        self.assertEqual(n[self.WLEVEL0], 1)
+        self.assertGreater(n[self.SHIELD0], 200)
+        self.check_mode_hud(n, g, 'after a death')
+        play(240)
+        row = [n[0x117 + k] for k in range(6)]
+        n[LIVES1] = 0
+        n[self.SHIELD0] = 0
+        self.kill(n, 0)
+        for _ in range(60 * 30):
+            n.step()
+            if n[STATE] == 1:
+                break
+        self.assertEqual(n[STATE], 1, 'title after GAME OVER')
+        n.step(30)
+        title = list(nametable(n, 1)[4 * 32 + 3:4 * 32 + 29])
+        self.assertTrue(all(t == 0x10 or t <= 9 for t in title), [hex(t) for t in title])
+
+    def test_coop_hud_no_stage_flags(self):
+        """RC6: in co-op the original stage flags (E8B2) never reach P2's part of
+        the HUD - before RC6 they were drawn into the buffer at stage starts
+        and P1 respawns and could show for a few frames (from stage 6 with
+        digits) until CoopHud wrote P2's fields again (whether they reached
+        the screen depended on the frame phase of the HUD stream). Every frame
+        through stage changes up to stage 7 and P1 deaths: no flag tile in
+        that part of the HUD buffer ($0690-$069B / $06B0-$06BB) nor of the
+        nametable."""
+        n = self.coop_at_edges()
+        for stage in range(6):
+            n[LIVES1], n[LIVES2] = 5, 5
+            if stage % 2:
+                n[self.SHIELD0] = 0
+                self.kill(n, 0)
+            stage0 = n[0x59]
+            for k in range(10):
+                n[0xC3 + k] = 0
+            for _ in range(900):
+                n[LIVES1], n[LIVES2] = max(n[LIVES1], 2), max(n[LIVES2], 2)
+                for k in range(8):
+                    n[0x738 + k] = 0
+                n.step()
+                right = set(self.hud_right(n)[0] + self.hud_right(n)[1])
+                buf = {n[0x690 + k] for k in range(12)} | {n[0x6B0 + k] for k in range(12)}
+                self.assertFalse(right & {0x6C, 0x6D}, f'stage {stage0 + 1}: flag in P2\'s area')
+                self.assertFalse(buf & {0x6C, 0x6D}, f'stage {stage0 + 1}: flag in the HUD buffer')
+                if n[0x59] != stage0 and n[SUBSTATE] == 8 and n[P1_DEAD] == 0:
+                    break
+            n.step(20)
+        self.assertGreaterEqual(n[0x59], 6)
 
 
 if __name__ == '__main__':

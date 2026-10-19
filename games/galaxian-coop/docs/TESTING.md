@@ -15,10 +15,45 @@ pip install -r games/galaxian-coop/tests/requirements.txt   # cynes, numpy
 python3 games/galaxian-coop/tests/test_coop.py -v
 ```
 
-Last run: 2026-10-18, RC5, ROM SHA-256 `d83b9896…6c0c03`, Linux,
-Python 3.14, cynes 0.1.2: **89/89 OK** (~450 s): 45 RC1 tests, 3 RC2 weapon tests, 8 respawn-shield
-tests, 5 RC3 tests, 21 RC4 tests, 7 RC5 tests (`test_shot_colours` rewritten for RC5, not counted again).
-Without cynes the 7 build tests run and the emulator tests are skipped.
+Last run: 2026-10-19, RC6, ROM SHA-256 `7e5d4fd1ee57fd0dba4901a37002b024bee4f8987bf471b8d7341b9c0ea232ca`, Linux, Python 3.14, cynes 0.1.2:
+**112/112 OK** (~640 s): the 89 RC5 tests (2 renamed, several updated for RC6, below) and 23 RC6 tests. Without cynes
+the 7 build tests run and the emulator tests are skipped.
+
+**RC6 – 1 PILOT / co-op parity** (each compares the same scenario in both modes, by RAM, nametable and
+picture, and requires equal results): `test_parity_start` (X3, W1, no shield, flags, next life 7000,
+`$3D` = 0, STG 01), `test_parity_free_w2` (in play, exploding with a ship coming, once per game, last ship,
+new game), `test_parity_progression` (1999/2000, 3999/4000, no boost without a clear, W3 → READY at
+8000, not from W2), `test_parity_overdrive` (start, banner, `W4 12s`, 4 lasers, x2, 720 frames, back to
+W3, x1, once per life), `test_solo_overdrive_aggression`, `test_parity_death_weapon`, `test_parity_extra_lives`
+(7000/14000/21000, cap 9, no original extra ship at 5000), `test_solo_stage_counter` (01–07, death, 99 → 01,
+flags agree), `test_solo_hud_pause_and_game_over`, `test_solo_no_p2_in_overdrive`, `test_parity_shots`,
+`test_solo_w4_stress_no_overrun`, `test_shield_single_player`, `test_demo_has_no_shield_or_boost` (also:
+the demo fires again).
+
+**RC6 – overdrive**: `test_ready_waits_for_next_stage` (READY: W3, x1, `W4 RDY`, the enemies identical
+with and without READY), `test_overdrive_counter_attack_frames` (frame-exact, 1P and co-op: F0 = the frame the new formation's
+last column is drawn, ≤ 24 frames after the first frame of play; F0 W4 12/59 +
+jingle + 3 divers state 0 → 1; F1 `OVERDRIVE!` in the picture with the divers' sprites; F1–F3 they move;
+the three dive targets computed from P1's position (EE52's formula); without READY the first attack only
+after > 200 frames), `test_overdrive_both_pilots_counter_attack` (both start together, targets P2, P1, P2),
+`test_ready_cancelled` (death, revive, game over, new game), `test_ready_on_the_last_kill`,
+`test_overdrive_once_per_activation` (one jingle, one message, 6 counter steps per 16 frames from F0, no
+start at the following stage, enemies identical after the end with or without the overdrive's
+history), `test_ready_hud`; updated: `test_w4_red_laser`, `test_overdrive_lasts_12_seconds` (exactly 720),
+`test_overdrive_independent_pilots`, `test_overdrive_aggression` (≥ +40 % starts, speed +18…28 %),
+`test_hud_in_overdrive`, `test_double_score_extra_life_and_hi_score` (both modes).
+
+**RC6 – 1P HUD (manual test report)**: `test_mode_switch_hud` (no emulator restart: 1P → 2P → 1P → 2P → 1P →
+1P; each game's rows 2–4 equal RAM in the nametable and the picture, `STG 01`, 1P's right part equal to a
+fresh 1P game, P2's cells blank in the picture), `test_solo_long_game_hud` (1P after a co-op game: stages
+1–4, score over 10 000 and 20 000, extra lives, W2/W3/READY/W4 x2 with `STG` shown, death + shield +
+W2, GAME OVER, title; every frame: no P2 leftover, no stray tile on the right), `test_coop_hud_no_stage_flags`
+(co-op up to stage 7 with P1 deaths: no flag in P2's part of the buffer or the nametable). Both bug tests
+were run against builds without the fix and fail there.
+
+RC6 updated (rules changed, not removed): `test_boost_thresholds` (1P gets the free W2), `test_stage_counter`
+(1P shows `STG`), `test_single_player_has_no_shield` → `test_shield_single_player`, the shield tests run
+in 1P too, `test_w4_red_laser` / `test_overdrive_lasts_30_seconds` (READY → next stage, 12 s).
 
 RC5 updated (not removed): `test_shot_colours` (P1 green; all 8 slots, both pilots firing in the same
 frames, after a death and after a Life Sharing revive), `test_palette_only_one_colour_changed` (`$2A`).
@@ -40,7 +75,9 @@ pip install stable-retro
 python3 games/galaxian-coop/tests/test_fceumm.py -v
 ```
 
-**5/5 OK** on RC5 (RC4: 4/4): fire (one shot per press, held FIRE = one shot, pool limits, all shots from the
+**8/8 OK** on RC6 (RC5: 5/5; RC6 adds `test_overdrive_starts_with_next_stage` – READY keeps W3, F0 of the
+next stage W4 12/59 and 3 divers launched, F1–F3 moving – and `test_single_player_rules` – free W2 and
+the shield in 1 PILOT): fire (one shot per press, held FIRE = one shot, pool limits, all shots from the
 ship's X) and P1/P2 parity on W1–W4; P1 and P2 death with W4 shots flying: no shot in RAM or OAM during
 the explosion, READY and wait, back on W1 with a shield that holds; **RC4 `test_shot_origins_every_slot`**:
 both pilots firing on W1–W4 while their ships move left and right, 3600 frames: every slot of both pilots
@@ -53,11 +90,12 @@ cropped edge may not fit), 3 colours each, only white shared. The RC2 code fails
 240 pixels: 8 cropped on each side), not RetroArch itself.
 
 Tracer (`tools/trace6502.py`: 6502 core, NROM, PPU stub with nametables and palette, logs every RAM,
-VRAM and APU write; not cycle-exact, no picture or sound output) – **4/4 OK**:
+VRAM and APU write; not cycle-exact, no picture or sound output) – **5/5 OK**:
 
 | Test | Checks |
 |---|---|
-| `test_overdrive_jingle_once` | the triangle (unused by the original) gets exactly the 7 arpeggio periods right after W4 starts, nothing before, no second jingle during 1200 more frames of kills; no original code writes the triangle |
+| `test_overdrive_jingle_once` | RC6: no jingle while READY; the triangle (unused by the original) gets exactly the 7 arpeggio periods from the frame W4 starts at the next stage (the counter-attack frame), no second jingle during 600 more frames of kills; no original code writes the triangle |
+| `test_solo_overdrive_sounds` | RC6: 1 PILOT: the jingle once at the start, the zap once per W4 press |
 | `test_overdrive_shot_sound` | W1/W3 press: FEA8's shot (`$4004–$4007` = `05 84 16 08` + noise); W4 press: the zap (`82 92 50 08`, no noise); one sound per press; both pilots in one frame: the same zap twice, nothing else; no new code writes pulse 1 |
 | `test_tunes_unchanged` | the first 6 s of a 1P game: pulse 1 writes (tunes, siren) identical to the original |
 | `test_tune_ram_intact_in_play` | `$0150–$01FF` (tune data in RAM) unchanged through 3000 frames of co-op with overdrive |
@@ -119,6 +157,38 @@ into both machines.
 | RC4 HUD | `test_stage_counter` | `STG 01`, `02`, `03` after natural stage changes; a death and life sharing keep it; `STG 99`, then `01` (the game's own wrap); nothing else on row 2; 1P: row 2 blank |
 
 ## 2. Measurements (emulator scripts, not part of the suite)
+
+**RC6 (ROM `7e5d4fd1…`)**, scripts in the session scratchpad (`aggr.py`, `window.py`, `stress.py`, `actcpu.py`,
+`aimshare.py`), corrected idle counter:
+
+Aggression, 12-s windows at the start of stages 2–5 (8 sessions per mode, same state for all three):
+
+| | normal stage | RC4 profile, same start | RC6 |
+|---|---|---|---|
+| dive starts / 720 frames (1P = co-op) | 3.25 | 4.0 (+23 %) | 5.75 (+77 %) |
+| first attack (frames from the stage's first frame of play) | ~275 | ~220 | 20 (F0: formation drawn) |
+| enemy shots / 720 frames | 6.5 | 11.1 | 17.2 |
+| dive speed (px/frame) | 1.00 | 1.14 | 1.23 |
+
+Steady state (co-op, P2 in overdrive kept on, 6 × 60 s, same states): dive starts 4.31 → 6.30 (RC4) →
+6.85 (RC6) per 1000 frames; speed 1.00 → 1.14 → 1.23; enemy shots heading toward P2 1 % → 52 % → 88 %;
+fired 8.7 → 12.3 → 19.1 per 1000 frames. Dive target decisions (tracer, `EE52` calls counted, 20 000
+frames): P2 alone in overdrive 75 % at P2, P1 alone 75 % at P1, both 50/50, none 50/50. Tuning variants
+measured on the way: slot limit +1 with RC4's flagship-window bypass +87–101 % starts (too strong),
+without the slot limit +49 %; dive boost one/two diver slots per frame 14–16 %, three slots with 4-px
+cells 33 %.
+
+CPU (12 sessions × 3 min per line; overdrive and aggression kept on, 8 shots, x2, lives kept):
+
+| Scenario | RC6 worst frame | previous ROM, same script | lag | resets |
+|---|---|---|---|---|
+| co-op, both W4, firing | 100 | 83 | 0 | 0 |
+| co-op, both W4 + both shields | 44 | 37 | 0 | 0 |
+| 1P W4 | 168 | – | 0 | 0 |
+| 1P W4 + shield | 83 | – | 0 | 0 |
+| activation frames F0–F7, 40 starts after real play | ≥ 225 (F0) | – | 0 | – |
+
+(cynes sessions start from a random power-on state; RC5's own sessions gave 96 / 73.)
 
 **RC5 (ROM `d83b9896…`)**: the PRG is RC4's except the palette byte `$E1CF` (data loaded once at reset);
 CHR changes only tiles `$E1`/`$EA`. Tracer, same input on RC4 and RC5, 20 000 frames of co-op (W4 phases
@@ -243,7 +313,20 @@ positions, free W2 after stage 1, W2 kept after a death, W3 after 4000 more, sta
 (30 s, countdown, sounds, x2, aggression, back to W3), no slowdown, game over and back to the menu.
 FAIL: P1 yellow / P2 orange shots too easy to confuse; remark: the two ships look too much alike.
 
-**RC5: not tested outside the emulators yet** (cynes, FCEUmm in stable-retro, tracer). RC5 checklist:
+**RC6: not tested outside the emulators yet** (cynes, FCEUmm in stable-retro, tracer). RC6 checklist:
+1. 1 PILOT: after clearing stage 1 → `W2`; die → back on W2, the ship blinks ~4 s and can't be hit; `STG 01`,
+   `02` … above the hi score (the flags on the right agree); no P2 anything, SELECT does nothing.
+2. Overdrive READY: on W3 score 8000 without dying → `OVERDRIVE READY NEXT STAGE` (co-op `P1 W4 READY NEXT
+   STAGE`) for ~2 s, `W4 RDY` above your HUD; still 3 shots, normal points, normal enemies.
+3. Clear the stage: in the first moment of the next one `OVERDRIVE!`, the jingle, `W4 12s`, and at once
+   three aliens break from the formation toward you – no calm start; attacks stay heavy for 12 s.
+4. After 12 s: `W3`, the field blank, normal enemies; lasers in flight finish.
+5. Die while READY → no overdrive at the next stage; a revive by SELECT doesn't bring it back.
+6. Co-op both READY in one stage: both start together (`P1 P2 OVERDRIVE!`), attacks split between you.
+7. The attract demo shoots again (as the original).
+8. Smoothness with both on W4 and shields: no stutter, no reset; HUD digits clean.
+
+RC5 checklist:
 1. P1's shots bright green, P2's orange on W1–W4 (lasers too), in 1 PILOT and co-op; easy to tell apart
    from each other, from the green aliens and from the white enemy bullets.
 2. P2's ship: delta nose with a white cockpit, flat-topped pods, split tail fins; P1's ship unchanged.
@@ -295,11 +378,13 @@ long games, two physical controllers. Please report the emulator/core, version a
 3. Title: logo, `CO-OP` badge (red, short white glint), `1 PILOT` / `2 PILOTS CO-OP`,
    `HACK BY ZVGELO ©2026`, Namco lines; SELECT moves the cursor, START starts.
 4. Top line of the screen empty in play, no `0` in the top-left corner.
-5. **1 PILOT**: original game, `X3` / `W1` in the HUD, pad 2 does nothing.
+5. **1 PILOT**: one ship with the same rules as a co-op pilot (RC6): `X3` / `W1` / `STG 01`, free W2 after
+   stage 1, shield after a respawn; pad 2 does nothing.
 6. **2 PILOTS CO-OP**: P1 left, P2 right; both move and fire at the same time; points to the right score;
    deaths of each pilot; `Xn` counts down; P1 out → `P2 SELECT TO REVIVE P1` (or `P1 OUT`) → SELECT on
    pad 2 → P1 back beside P2, P2 −1 life, +200; game over only after both.
-7. Boosts: after stage 1 in co-op both on `W2` (2 shots); W4 shows red lasers and `GREAT SHOT`.
+7. Boosts: after stage 1 on `W2` (2 shots, both modes); W4: `W4 RDY`, then at the next stage `OVERDRIVE!`
+   with the counter-attack and `W4 12s`.
 8. Watch for: flicker with many sprites on one line, any short stutter with both on W4 (lag frames),
    the P1 ship's lower split at the extreme left/right positions.
 9. Debugger (optional): File → Import Labels → `build/Galaxian_Coop.mlb` (format Mesen 2; import not
