@@ -15,15 +15,15 @@
 **NES Custom ROMs** zbiera nieoficjalne projekty, dzięki którym **dwóch graczy gra jednocześnie**
 w klasyczne gry NES/Famicom: autorską modyfikację kooperacyjną *Galaxiana* oraz powtarzalne budowanie
 istniejącego hacka kooperacyjnego *Super Mario Bros.* Repozytorium zawiera kod źródłowy, skrypty budujące,
-testy i łatki (cudze wyraźnie oznaczone) – nigdy samych gier. Buduje się z własnego, legalnie uzyskanego ROM-u.
+testy i własne łatki – nigdy samych gier ani cudzych łatek. Buduje się z własnego, legalnie uzyskanego ROM-u.
 
 ## Gry
 
 | [Galaxian Coop](games/galaxian-coop/README_PL.md) | Super Mario Bros. Two Players Hack – zestaw do budowania |
 |---|---|
 | ![Galaxian Coop: dwóch pilotów walczy razem z formacją](games/galaxian-coop/assets/screenshots/03-coop-gameplay.png) | *Kod, zrzuty i README na gałęzi `game/super-mario-coop`.* |
-| Nowy silnik kooperacji dla *Galaxiana* (Japonia), autor Zvgelo: drugi statek, poziomy broni, 12-sekundowy Red Laser Overdrive z kontratakiem wrogów, tarcza po odrodzeniu, dzielenie się życiami. Te same zasady dla jednego pilota. | Budowanie jednym poleceniem, z kontrolą sum, hacka *Super Mario Bros. Two Players Hack* – **autorzy hacka: Corpse Grinder i Ti (2018)**; oryginalna łatka jest dołączona z podaniem autorów (nie na licencji MIT), a ROM pozostaje niezmieniony. |
-| Mapper 0 · łatka BPS w repozytorium · RC6 | Mapper 24 (VRC6a) · oryginalna `.xdelta` hacka |
+| Nowy silnik kooperacji dla *Galaxiana* (Japonia), autor Zvgelo: drugi statek, poziomy broni, 12-sekundowy Red Laser Overdrive z kontratakiem wrogów, tarcza po odrodzeniu, dzielenie się życiami. Te same zasady dla jednego pilota. | Budowanie jednym poleceniem, z kontrolą sum, hacka *Super Mario Bros. Two Players Hack* – **autorzy hacka: Corpse Grinder i Ti (2018)**; łatka pochodzi z wydania autorów (nie ma jej w repozytorium), a ROM pozostaje niezmieniony. |
+| Mapper 0 · łatka BPS w repozytorium · RC6 | Mapper 24 (VRC6a) · `.xdelta` hacka od jego autorów |
 
 Każdy projekt jest rozwijany na osobnej gałęzi (`game/galaxian-coop`, `game/super-mario-coop`); ta gałąź
 zawiera Galaxian Coop. Każde README opisuje zasady lub sterowanie, zrzuty ekranu i rozwiązywanie problemów.
@@ -83,10 +83,10 @@ nes-custom-roms/
         ├── README.md       zasady, instalacja, sterowanie, zrzuty (+ README_PL.md)
         ├── assets/         zrzuty ekranu (i grafika README)
         ├── src/            kod źródłowy i build.py
-        ├── patches/        łatki – bez danych oryginału (cudze: zob. THIRD_PARTY_NOTICES)
+        ├── patches/        tylko własne łatki (BPS Galaxiana) – bez danych oryginału
         ├── docs/           CHANGELOG, TESTING i dokumentacja techniczna
         ├── tests/          testy automatyczne
-        ├── private/        Twoje oryginalne ROM-y                (ignorowane przez git)
+        ├── private/        Twoje ROM-y, łatka hacka Mario        (ignorowane przez git)
         └── build/          wygenerowane ROM-y i pliki wynikowe   (ignorowane przez git)
 ```
 
@@ -94,8 +94,8 @@ nes-custom-roms/
 
 - **Licencja**: własny kod, narzędzia, testy, dokumentacja i grafika projektu są udostępnione na
   [licencji MIT](LICENSE) © 2026 Zvgelo. Licencja **nie** obejmuje oryginalnych gier, ROM-ów ani ich
-  zasobów, Super Mario Bros. Two Players Hack ani jego oryginalnej łatki (dołączonej z podaniem autorów,
-  bez domniemanej zgody na redystrybucję), ani innych materiałów osób trzecich – zob.
+  zasobów, Super Mario Bros. Two Players Hack ani jego oryginalnej łatki (nierozpowszechnianej tutaj), ani
+  innych materiałów osób trzecich – zob.
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) (po angielsku).
 - **Nieoficjalny projekt fanowski.** Niepowiązany z Bandai Namco, Nintendo ani autorami Two Players Hack
   i nieautoryzowany przez nich. *Galaxian* © Namco (1979, NES/Famicom 1984); *Super Mario Bros.* ©

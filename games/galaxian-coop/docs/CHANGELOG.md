@@ -1,9 +1,8 @@
 # Changelog – Galaxian Coop
 
 Output of each version: `build/Galaxian_Coop.nes` from `Galaxian (Japan).nes`
-(SHA-256 `1188cedf…3613e`). Earlier versions can be rebuilt from their git commit; commit IDs quoted
-below are from the development history before the 2026-10-20 clean-up – see
-[history/COMMIT_MAP.md](history/COMMIT_MAP.md) for the published commit of each.
+(SHA-256 `1188cedf…3613e`). Earlier versions can be rebuilt from their git commit – see
+[history/COMMIT_MAP.md](history/COMMIT_MAP.md) for the published commit of each stage.
 
 ## 2026-10-20 – license, README redesign and documentation audit (no change to the game)
 
@@ -15,6 +14,7 @@ below are from the development history before the 2026-10-20 clean-up – see
   `docs/history/TESTING_HISTORY.md`), MEMORY_MAP status/message rows updated, superseded design notes
   labelled in REVERSE_ENGINEERING, historical sections labelled in IMPLEMENTATION_REPORT,
   `STAGE1_NOTES.md` moved to `docs/history/`, `docs/history/COMMIT_MAP.md` added.
+- `docs/history/COMMIT_MAP.md` lists the published commits; development commit IDs are no longer quoted.
 - Code, patch and ROM unchanged: SHA-256 `7e5d4fd1…`, BPS 5213 bytes.
 
 ## 2026-10-20 – public documentation (no change to the game)
@@ -262,7 +262,7 @@ Result: SHA-256 `9e87f49b320547c96663e810196c87c78bfb714c040fa12596b8f33bced3ee5
   4th frame. See TESTING.md for measurements.
 - Build output renamed to `Galaxian_Coop.nes` / `.mlb` / `.bps`.
 
-## 2026-10-18 – Stage 2 (commit `3080e8d`, published as part of `e09f2be`, branch `game/galaxian-coop`)
+## 2026-10-18 – Stage 2 (published as part of `b054f37`, branch `game/galaxian-coop`)
 
 Result: SHA-256 `eb19e3ef1519b20da9e3a9c16c9e4cadf1a6b7725d61adfb27d875ad2db88159`.
 

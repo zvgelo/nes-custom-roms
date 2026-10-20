@@ -4,8 +4,8 @@
 > rozwoju. Zasady opisane w sekcjach RC1–RC5 (np. W4 na 30 s uruchamiane od razu po zdobyciu punktów,
 > W3 za 5000, brak tarczy w 1P) są **nieaktualne** – obowiązują zasady RC6 opisane w
 > [README](../README.md) i w sekcji R6 poniżej. Testy manualne były wykonywane w emulatorze; konkretne
-> stanowisko testowe nie jest tu opisywane. Identyfikatory commitów cytowane w raporcie pochodzą z historii
-> sprzed porządkowania (squash 2026-10-20) – odpowiadające im opublikowane commity: [history/COMMIT_MAP.md](history/COMMIT_MAP.md).
+> stanowisko testowe nie jest tu opisywane. Commity z okresu rozwoju są przywoływane po nazwach;
+> opublikowane commity, które je zawierają: [history/COMMIT_MAP.md](history/COMMIT_MAP.md).
 
 Data: 2026-10-19. Branch: `game/galaxian-coop` (bez merge do `main`, bez remote, bez push).
 Wersja: **RC6** – jeden zestaw zasad dla `1 PILOT` i co-op; Overdrive READY → start w następnym etapie,
@@ -163,9 +163,9 @@ demu widok oryginału; w demie zawsze W1.
 ### R6.9 Commity RC6
 
 Na `game/galaxian-coop`, od najstarszego (bez merge do `main`, bez push, bez remote):
-`8f30ee0 Unify player progression`, `4776844 Enable solo respawn shield`, `5cdd24c Enable solo stage HUD`,
-`54e0d94 Restore demo firing`, `aa44399 Add solo parity tests`, `5fe537d Strengthen overdrive aggression`,
-`4577b68 Start overdrive with next stage`, `ece6f71 Fix solo HUD after co-op`, `69d58d9 Add overdrive and HUD tests`,
+`Unify player progression`, `Enable solo respawn shield`, `Enable solo stage HUD`,
+`Restore demo firing`, `Add solo parity tests`, `Strengthen overdrive aggression`,
+`Start overdrive with next stage`, `Fix solo HUD after co-op`, `Add overdrive and HUD tests`,
 `Update RC6 docs` (dokumentacja, BPS). Każdy commit kodu się buduje (sprawdzone).
 
 ### R6.10 Ograniczenia
@@ -485,12 +485,12 @@ a statkiem. OAM: bez dodatkowych sprite'ów.
 
 ### R4.12 Commity (od najstarszego)
 
-1. `309bdfc Fix score HUD corruption` – przeniesienie zmiennych z wiersza wyników, kontrola buildu
+1. `Fix score HUD corruption` – przeniesienie zmiennych z wiersza wyników, kontrola buildu
    z listą RAM oryginału, tracer i skrypt audytu, poprawiony helper nametable, 4 testy HUD/tytułu.
-2. `d925e73 Add overdrive power-up` – cały kod RC4: W3 za 4000, trwałe W2, Overdrive (30 s, ×2, dźwięki,
+2. `Add overdrive power-up` – cały kod RC4: W3 za 4000, trwałe W2, Overdrive (30 s, ×2, dźwięki,
    agresja), kolory i wyśrodkowanie pocisków, strzał po ruchu, okno trafienia lasera, wiersz statusu
    (`STG`, odliczanie), oszczędności CPU, kontrola nakładania bloków kodu.
-3. `bf500a8 Add RC4 regression tests` – 17 nowych testów cynes, 1 FCEUmm, 4 tracera; aktualizacja 7
+3. `Add RC4 regression tests` – 17 nowych testów cynes, 1 FCEUmm, 4 tracera; aktualizacja 7
    starszych testów pod zmienione reguły.
 4. `Update RC4 docs` – README, CHANGELOG, TESTING, MEMORY_MAP, REVERSE_ENGINEERING, ten raport, łatka BPS.
 

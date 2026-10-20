@@ -1,38 +1,33 @@
-# Commit map – cleaned-up development history
+# Commit map – published history
 
-Before the first publication the history of `game/galaxian-coop` was cleaned up in three steps, without
-changing `main` or the history shared with it:
-
-1. **First squash** (2026-10-20): 65 Galaxian-only development commits → 19 commits.
-2. **Second squash** (2026-10-20): short commits of one stage combined again.
-3. **Branch separation** (2026-10-20): the merge of the Mario documentation commit (`Merge Mario docs`,
-   `c67826a`, second parent `da68d18`) and a later copy of the Mario folder were removed from this branch.
-   `games/super-mario-coop/` here is exactly what the branch inherits from `main`; Mario is developed only
-   on `game/super-mario-coop`.
-
-Older documents (CHANGELOG, IMPLEMENTATION_REPORT, history/TESTING_HISTORY) quote commit IDs from before
-these steps; they are not part of the published history. This table maps them to the published commits.
-Apart from the Mario folder and the root README (which the Mario merge had changed), every published
-commit has the tree of the last commit of its group; the only other content changes, made in step 1, were
-references to a private test setup replaced by neutral wording.
+The development history was cleaned up before the first publication: short commits of one stage were
+combined, an accidental copy of the Mario project was removed from this branch (Mario is developed only
+on `game/super-mario-coop`; `games/super-mario-coop/` here is what the branch inherits from `main`), the
+author of every commit was set to the project's public name, and the Super Mario Bros. Two Players Hack
+patch – a third-party file – was removed from every commit. Commit IDs of the development history are
+therefore not published; older documents (IMPLEMENTATION_REPORT, history/TESTING_HISTORY) refer to
+development commits by their messages, which are listed here next to the published commit that contains
+them.
 
 ## game/galaxian-coop
 
-| Published commit | Message | After step 2 | After step 1 | Original development commits (oldest first) |
-|---|---|---|---|---|
-| `e09f2be` | Add Galaxian co-op ROM hack | `e09f2be` | `576a44b`, `46ec512`, `90b0eb8` | `ccf390b` Add Galaxian stage 1, `067eff8` Rename mod to Galaxian Coop, `7310245` Add 6502 assembler; `c6140d1` Add player 2 ship and movement, `5267eef` Add P2 combat, lives and HUD; `8a35d3b` Add BPS patch output, `bce9287` Add stage 2 BPS patch, `2b5d3d9` Add emulator tests, `16dff0e` Rename folder to galaxian-coop, `32680b7` Add Mesen label export, `3080e8d` Add Galaxian Coop docs |
-| `20a671d` | Merge main into Galaxian | `9228f1f` | `08806b0` | `2bbabd3` Merge main into Galaxian |
-| `58b8c56` | Move private inputs out of the tree | `564d837` | `d93fde0` | `dd9cb11` Move Galaxian input to private, `0ae3387` Update Galaxian docs |
-| `1f9ee01` | Merge main into Galaxian | `6cd5509` | `eb85998` | `2998015` Merge main into Galaxian |
-| `e48bcf4` | Add lives HUD, life sharing and weapon progression | `9b55184` | `a6af1e2`, `7700f60`, `45f8ade` | `740ef8f` Fix top screen artifacts, `06a98ca` Improve lives HUD; `efe3eb2` Add life sharing, `660389e` Add title credits, `c1e87f7` Add coop tests, `03ed0bd` Fix stray HUD tile, `1a6a7fd` Unify lives display; `3ba7a0a` Add weapon boost, `7823b63` Add W4, banners, spawns, badge, `3a9415c` Add boost and banner tests, `72c31f7` Rename outputs, update BPS, `4f6281c` Add Galaxian build guide |
-| `39d0474` | Add respawn shield and stabilize weapons and CPU use | `9050cd3` | `0f40098`, `0f2cc03`, `79eba26` | `0e079ae` Update tools list, `f77d5ad` Check W4 lag frames, `fb94d58` Add implementation report; `ee68486` Fix fire input, `53a8266` Fix death weapon reset, `3545da4` Fix stage one boost, `e676f90` Add respawn shield, `2a140a2` Add shield blinking, `d26e470` Fix fire after respawn, `daa49bb` Add weapon regression tests, `b67e532` Test respawn protection, `dfce5a9` Update RC2 docs; `0bc21ef` Fix P1 ghost shooting, `d817e59` Verify weapon parity, `49d6981` Optimize frame budget, `60268b2` Add RC3 tests, `1073733` Add FCEUmm checks, `ae7f469` Update RC3 docs |
-| `f7979ff` | Add overdrive and distinct player visuals | `e7e550f` | `0b7c8db`, `5447a5f` | `309bdfc` Fix score HUD corruption, `d925e73` Add overdrive power-up, `bf500a8` Add RC4 regression tests, `3b9d13e` Update RC4 docs, `1e73f0c` Give free W2 to waiting pilots; `b3cfe91` Improve player colors, `48a8cba` Differentiate coop ships, `5281576` Add visual regression tests, `02b59b7` Update RC5 docs |
-| `005dfc8` | Unify solo and co-op rules and rework overdrive | `23902d3` | `c26798f`, `e4d0a17` | `8f30ee0` Unify player progression, `4776844` Enable solo respawn shield, `5cdd24c` Enable solo stage HUD, `54e0d94` Restore demo firing, `aa44399` Add solo parity tests; `5fe537d` Strengthen overdrive aggression, `4577b68` Start overdrive with next stage, `ece6f71` Fix solo HUD after co-op, `69d58d9` Add overdrive and HUD tests, `f9fa8b6` Update RC6 docs |
-| (following commits) | Prepare public documentation; Add MIT license and third-party notices | `0c31b5e`, `21c58ab`, `5b0d2f6` | `2f7f29a` and later | written after step 1 |
+| Published commit | Message | Development commits combined in it (oldest first) |
+|---|---|---|
+| `b054f37` | Add Galaxian co-op ROM hack | Add Galaxian stage 1, Rename mod to Galaxian Coop, Add 6502 assembler; Add player 2 ship and movement, Add P2 combat, lives and HUD; Add BPS patch output, Add stage 2 BPS patch, Add emulator tests, Rename folder to galaxian-coop, Add Mesen label export, Add Galaxian Coop docs |
+| `4563b11` | Merge main into Galaxian | Merge main into Galaxian |
+| `5233eab` | Move private inputs out of the tree | Move Galaxian input to private, Update Galaxian docs |
+| `5e09935` | Merge main into Galaxian | Merge main into Galaxian |
+| `35ebd40` | Add lives HUD, life sharing and weapon progression | Fix top screen artifacts, Improve lives HUD; Add life sharing, Add title credits, Add coop tests, Fix stray HUD tile, Unify lives display; Add weapon boost, Add W4, banners, spawns, badge, Add boost and banner tests, Rename outputs, update BPS, Add Galaxian build guide |
+| `097c530` | Add respawn shield and stabilize weapons and CPU use | Update tools list, Check W4 lag frames, Add implementation report; Fix fire input, Fix death weapon reset, Fix stage one boost, Add respawn shield, Add shield blinking, Fix fire after respawn, Add weapon regression tests, Test respawn protection, Update RC2 docs; Fix P1 ghost shooting, Verify weapon parity, Optimize frame budget, Add RC3 tests, Add FCEUmm checks, Update RC3 docs |
+| `88845f0` | Add overdrive and distinct player visuals | Fix score HUD corruption, Add overdrive power-up, Add RC4 regression tests, Update RC4 docs, Give free W2 to waiting pilots; Improve player colors, Differentiate coop ships, Add visual regression tests, Update RC5 docs |
+| `711af5c` | Unify solo and co-op rules and rework overdrive | Unify player progression, Enable solo respawn shield, Enable solo stage HUD, Restore demo firing, Add solo parity tests; Strengthen overdrive aggression, Start overdrive with next stage, Fix solo HUD after co-op, Add overdrive and HUD tests, Update RC6 docs |
+| `e4cd410` | Prepare public documentation | written after the first clean-up step |
+| `a9f7d5e` | Add MIT license and third-party notices | written after the first clean-up step |
 
-The merges with `main` keep their second parents `694580d` and `bdb84e6`.
+Later commits are ordinary commits made after the clean-up. The merges with `main` have the second
+parents `e3dfa1f` and `54803ff`.
 
 ## game/super-mario-coop
 
-Mario's own history is described in its branch. Its earlier commits (`db728c4` … `bcc3b93`,
-2026-10-18 02:48–02:57) belong to `main` (merged in `694580d`) and were not changed.
+Mario's own history is described in its branch. Its earlier commits (`63d1e85` … `77a5b4e` and the merge
+`59d1bae`, 2026-10-18 02:48–02:56) are part of `main` (merged in `e3dfa1f`).
