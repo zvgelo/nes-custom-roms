@@ -21,9 +21,12 @@ __pycache__/
 .venv/
 venv/
 
-# IDE / local tooling
+# IDE / local tooling (assistant and agent configuration stays local)
 .idea/
 .mcp.json
+.claude/
+.agents/
+skills-lock.json
 
 # Mesen debugger artefacts
 *.mss

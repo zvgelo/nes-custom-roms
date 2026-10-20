@@ -19,29 +19,43 @@ testy i własne łatki – nigdy samych gier ani cudzych łatek. Buduje się z w
 
 ## Gry
 
-| Galaxian Coop | [Super Mario Bros. Two Players Hack – zestaw do budowania](games/super-mario-coop/README_PL.md) |
+| [Galaxian Coop](games/galaxian-coop/README_PL.md) | [Super Mario Bros. Two Players Hack – zestaw do budowania](games/super-mario-coop/README_PL.md) |
 |---|---|
-| *Kod, zrzuty i README na gałęzi `game/galaxian-coop`.* | ![Two Players Hack: Mario i Luigi rozdzieleni w poziomie 1-1](games/super-mario-coop/assets/screenshots/03-two-players-run.png) |
+| ![Galaxian Coop: dwóch pilotów walczy razem z formacją](games/galaxian-coop/assets/screenshots/03-coop-gameplay.png) | ![Two Players Hack: Mario i Luigi rozdzieleni w poziomie 1-1](games/super-mario-coop/assets/screenshots/03-two-players-run.png) |
 | Nowy silnik kooperacji dla *Galaxiana* (Japonia), autor Zvgelo: drugi statek, poziomy broni, 12-sekundowy Red Laser Overdrive z kontratakiem wrogów, tarcza po odrodzeniu, dzielenie się życiami. Te same zasady dla jednego pilota. | Budowanie jednym poleceniem, z kontrolą sum, hacka *Super Mario Bros. Two Players Hack* – **autorzy hacka: Corpse Grinder i Ti (2018)**; łatka pochodzi z wydania autorów (nie ma jej w repozytorium), a ROM pozostaje niezmieniony. |
 | Mapper 0 · łatka BPS w repozytorium · RC6 | Mapper 24 (VRC6a) · `.xdelta` hacka od jego autorów |
 
-Każdy projekt jest rozwijany na osobnej gałęzi (`game/galaxian-coop`, `game/super-mario-coop`); ta gałąź
-zawiera tylko zestaw do budowania Mario. Każde README opisuje sterowanie, zrzuty ekranu i rozwiązywanie
-problemów.
+README każdej gry opisuje zasady lub sterowanie, zrzuty ekranu i rozwiązywanie problemów. Prace toczą się
+na gałęziach `game/galaxian-coop` i `game/super-mario-coop`.
 
 ## Najważniejsze cechy
 
 - **Dwóch graczy naraz** na jednym ekranie, każdy z własnym kontrolerem.
-- **Zwykłe emulatory**: łatany jest ROM, nie emulator; wynik to zwykły plik NES z mapperem 24.
+- **Zwykłe emulatory**: łatany jest ROM, nie emulator; wyniki to zwykłe pliki NES z mapperem 0 i 24.
 - **Powtarzalne budowanie**: każde wejście i wyjście jest sprawdzane przez SHA-256; dwa buildy dają te same
   bajty.
-- **Bez zależności**: dekoder xdelta/VCDIFF w czystym Pythonie nakłada łatkę hacka (`xdelta3` opcjonalnie).
-- **Testy w emulatorze**: rdzeń FCEUmm przez `stable-retro` – zob.
-  [docs/TESTING.md](games/super-mario-coop/docs/TESTING.md) (po angielsku).
+- **Łatki bez danych gry**: łatka BPS Galaxiana czyta oryginalne dane z Twojego ROM-u; test sprawdza, że nie
+  zawiera żadnej części oryginału.
+- **Budowanie bez zależności**: własny asembler 6502, łatki BPS i dekoder xdelta/VCDIFF w czystym Pythonie.
+- **Testy w emulatorach**: cynes, rdzeń FCEUmm i tracer 6502 (dźwięk, RAM) – zob. `docs/TESTING.md` każdej
+  gry (po angielsku).
 
 ## Szybki start
 
-Zbuduj Two Players Hack z własnego ROM-u i łatki od autorów hacka (Python 3, z katalogu głównego):
+**Galaxian Coop** – nałóż łatkę BPS na swój ROM (Python 3, z katalogu głównego repozytorium):
+
+```bash
+sha256sum "Galaxian (Japan).nes"
+# 1188cedf84657769f19daef474d9a20e7c2d16f9c5c5998d5baab59f74f3613e
+python3 tools/bps.py apply "Galaxian (Japan).nes" games/galaxian-coop/patches/Galaxian_Coop.bps "Galaxian Coop.nes"
+sha256sum "Galaxian Coop.nes"
+# 7e5d4fd1ee57fd0dba4901a37002b024bee4f8987bf471b8d7341b9c0ea232ca
+```
+
+Otwórz `Galaxian Coop.nes` w dowolnym emulatorze NES. Działa też każde inne narzędzie BPS (Flips,
+Rom Patcher JS, beat).
+
+**Super Mario Bros. Two Players Hack** – zbuduj go z własnego ROM-u i łatki od autorów hacka:
 
 ```bash
 mkdir -p games/super-mario-coop/private
@@ -59,12 +73,16 @@ kontrolne i inne narzędzia: [README](games/super-mario-coop/README_PL.md#jak-uz
 ## Budowanie i testy
 
 ```bash
-pip install -r games/super-mario-coop/tests/requirements.txt    # stable-retro, numpy (testy w emulatorze)
-python3 games/super-mario-coop/tests/test_build.py -v           # 16 testów, w tym 2 w rdzeniu FCEUmm
+python3 games/galaxian-coop/src/build.py        # wymaga games/galaxian-coop/private/Galaxian (Japan).nes
+python3 games/super-mario-coop/src/build.py     # wymaga private/original.nes i .xdelta hacka
 ```
 
-Budowanie wymaga tylko Pythona 3 (testowane 3.14, Linux). Wyniki:
-[games/super-mario-coop/docs/TESTING.md](games/super-mario-coop/docs/TESTING.md) – wszystkie zaliczone.
+Wyniki trafiają do `games/<gra>/build/`; build wypisuje SHA-256 wyniku i odrzuca złe wejścia. Testy i ich
+ostatnie wyniki: [Galaxian Coop](games/galaxian-coop/docs/TESTING.md) (cynes 112, FCEUmm 8, tracer 5 –
+wszystkie zaliczone) i [budowanie Mario Two Players Hack](games/super-mario-coop/docs/TESTING.md) (16,
+w tym 2 w rdzeniu FCEUmm – wszystkie zaliczone); oba dokumenty są po angielsku. Budowanie wymaga tylko
+Pythona 3 (testowane 3.14, Linux); testy w emulatorach wymagają pakietów z
+`games/<gra>/tests/requirements.txt`, a zestaw FCEUmm Galaxiana – `stable-retro`.
 
 ## Struktura projektu
 
@@ -74,12 +92,14 @@ nes-custom-roms/
 ├── LICENSE                 licencja MIT – własne materiały projektu
 ├── THIRD_PARTY_NOTICES.md  czego licencja MIT nie obejmuje
 ├── assets/readme/          grafika README
-├── tools/                  wspólne narzędzia (na tej gałęzi: dekoder VCDIFF)
+├── tools/                  wspólne narzędzia: asembler 6502, łatki BPS, dekoder VCDIFF,
+│                           pomocnicze funkcje testów, tracer 6502
 └── games/
     └── <gra>/
         ├── README.md       zasady, instalacja, sterowanie, zrzuty (+ README_PL.md)
         ├── assets/         zrzuty ekranu (i grafika README)
         ├── src/            kod źródłowy i build.py
+        ├── patches/        tylko własne łatki (BPS Galaxiana) – bez danych oryginału
         ├── docs/           CHANGELOG, TESTING i dokumentacja techniczna
         ├── tests/          testy automatyczne
         ├── private/        Twoje ROM-y, łatka hacka Mario        (ignorowane przez git)
