@@ -21,16 +21,16 @@
 
 **NES Custom ROMs** collects unofficial projects that let **two players play classic NES/Famicom games at
 the same time**: an original co-op modification of *Galaxian* and a reproducible build of an existing
-*Super Mario Bros.* co-op hack. The repository contains source code, build scripts, tests and patches
-(third-party ones marked as such) – never the games themselves. You build from your own, legally obtained ROM.
+*Super Mario Bros.* co-op hack. The repository contains source code, build scripts, tests and the
+project's own patches – never the games themselves or third-party patches. You build from your own, legally obtained ROM.
 
 ## Games
 
 | Galaxian Coop | [Super Mario Bros. Two Players Hack – build kit](games/super-mario-coop/README.md) |
 |---|---|
 | *Code, screenshots and README on branch `game/galaxian-coop`.* | ![Two Players Hack: Mario and Luigi apart in level 1-1](games/super-mario-coop/assets/screenshots/03-two-players-run.png) |
-| New co-op engine for *Galaxian* (Japan) by Zvgelo: a second ship, weapon levels, a 12-second Red Laser Overdrive with an enemy counter-attack, respawn shield, life sharing. Same rules for one pilot. | One-command, checksum-verified build of the *Super Mario Bros. Two Players Hack* – **the hack is by Corpse Grinder and Ti (2018)**; its original patch is included with attribution (not MIT-licensed) and the ROM is left unmodified. |
-| Mapper 0 · BPS patch included · RC6 | Mapper 24 (VRC6a) · original `.xdelta` of the hack |
+| New co-op engine for *Galaxian* (Japan) by Zvgelo: a second ship, weapon levels, a 12-second Red Laser Overdrive with an enemy counter-attack, respawn shield, life sharing. Same rules for one pilot. | One-command, checksum-verified build of the *Super Mario Bros. Two Players Hack* – **the hack is by Corpse Grinder and Ti (2018)**; its patch comes from the authors' own release (not included here) and the ROM is left unmodified. |
+| Mapper 0 · BPS patch included · RC6 | Mapper 24 (VRC6a) · the hack's `.xdelta` from its authors |
 
 Each project is developed on its own branch (`game/galaxian-coop`, `game/super-mario-coop`); this branch
 contains only the Mario build kit. Each README has the controls, screenshots and troubleshooting.
@@ -47,18 +47,20 @@ contains only the Mario build kit. Each README has the controls, screenshots and
 
 ## Quick start
 
-Build the Two Players Hack from your ROM and the included original patch (Python 3, from the repository root):
+Build the Two Players Hack from your ROM and the hack's patch from its authors (Python 3, from the repository root):
 
 ```bash
 mkdir -p games/super-mario-coop/private
 cp "Super Mario Bros. (World).nes" games/super-mario-coop/private/original.nes
+cp "Super Mario Bros. (Two Players Hack).xdelta" games/super-mario-coop/private/
 python3 games/super-mario-coop/src/build.py
 sha256sum "games/super-mario-coop/build/Super Mario Bros. (Two Players Hack).nes"
 # e962eee2c23449070ebd599357570cfc9da9586e21f142596f49b1eb8c691dd4
 ```
 
-Open the result in an NES emulator with mapper 24 support. Checksums, other patching tools and the
-authors' original release: [README](games/super-mario-coop/README.md#getting-the-game).
+The patch is not included: download it from the authors' release ([Emu-Land thread](https://www.emu-land.net/forum/index.php?topic=81090.0),
+attachment `Super Mario Bros. (Two Players Hack).7z`). Open the result in an NES emulator with mapper 24
+support. Checksums and other patching tools: [README](games/super-mario-coop/README.md#getting-the-game).
 
 ## Build & testing
 
@@ -86,8 +88,7 @@ nes-custom-roms/
         ├── src/            source code and build.py
         ├── docs/           CHANGELOG, TESTING and technical documentation
         ├── tests/          automatic tests
-        ├── patches/        the hack's original patch (third-party, see THIRD_PARTY_NOTICES)
-        ├── private/        your original ROMs                         (ignored by git)
+        ├── private/        your original ROMs, the Mario hack's patch (ignored by git)
         └── build/          generated ROMs and outputs                 (ignored by git)
 ```
 
@@ -95,8 +96,8 @@ nes-custom-roms/
 
 - **License**: the project's own code, tools, tests, documentation and artwork are released under the
   [MIT License](LICENSE) © 2026 Zvgelo. It does **not** cover the original games, ROMs or their assets,
-  the Super Mario Bros. Two Players Hack or its original patch (included with attribution, no
-  redistribution permission implied), or other third-party material – see
+  the Super Mario Bros. Two Players Hack or its original patch (not distributed here), or other
+  third-party material – see
   [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - **Unofficial fan project.** Not affiliated with, endorsed by or sponsored by Bandai Namco, Nintendo or
   the authors of the Two Players Hack. *Galaxian* © Namco (1979, NES/Famicom 1984); *Super Mario Bros.* ©
