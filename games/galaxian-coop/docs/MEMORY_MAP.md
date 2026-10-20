@@ -208,9 +208,9 @@ variables there are set at the start of a game before use (`BUL_LV` is also mask
 | Where | Content |
 |---|---|
 | `$2000` row 0 | the original's row writer writes its blank row to cols 3–28 every idle frame: unusable |
-| `$2000` row 1, cols 3–28 | message banner (revive prompt, GREAT SHOT), written by the row writer `E4AA` |
-| `$2000` row 2 | status row (never written by the original in play): P1 overdrive `W4 30s` cols 2–7, `STG 01` cols 13–18 (co-op), P2 overdrive cols 22–27; VRAM queue, only on change; blanked once at a game start |
-| `$2000` row 3/4 | HUD: P1 icon col 1, `W`+level row 3 cols 2–3, `X`+lives row 4 cols 2–3; labels; scores; P2 block cols 28–30 |
+| `$2000` row 1, cols 3–28 | message line (revive prompt, `… W4 READY NEXT STAGE`, `… OVERDRIVE!`), written by the row writer `E4AA`; RC4–RC5 also `GREAT SHOT` (superseded) |
+| `$2000` row 2 | status row (never written by the original in play): P1 overdrive field cols 2–7 (`W4 RDY` or `W4 12s` … `W4 01s`), `STG 01` cols 13–18 (both modes since RC6), P2 overdrive field cols 22–27; VRAM queue, only on change; blanked once at a game start |
+| `$2000` row 3/4 | HUD: P1 icon col 1, `W`+level row 3 cols 2–3, `X`+lives row 4 cols 2–3; labels; scores; cols 20–31 from the buffer `$0690–$06BB`: co-op P2 block (`2UP`, score, icon, `Wn`, `Xn`), 1 PILOT the original stage flags only (blanked at every game start, RC6) |
 | attribute `$23C7` = `$10`, `$23CF` = `$01` | co-op: P2 HUD icon in palette 1 (reset to 0 for 1P) |
 | `$2800` rows 16, 18, 28 | title rows `1 PILOT`, `2 PILOTS CO-OP`, `HACK BY ZVGELO ©2026` |
 | `$2800` row 29 | must stay blank: its last pixel row is screen line 0 in play (ScrollFix) |

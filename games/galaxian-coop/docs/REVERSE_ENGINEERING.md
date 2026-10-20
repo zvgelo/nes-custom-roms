@@ -174,6 +174,10 @@ hardware-driven (envelope + sweep); `FED4` meant to ramp its noise but clears `$
 
 ## 7. Key design decisions
 
+Notes are labelled with the release candidate that introduced them. Where a later version changed the
+behaviour, the note says **Superseded** and points to the current rule; the current rules are in the
+game's [README](../README.md).
+
 - **P2 ship as sprites**: P1's ship is background moved by a raster split; a second split on the same lines
   is impossible. The ship graphic is symmetric, so one tile per half is drawn twice (second copy flipped).
 - **One bullet engine for both pilots and modes**: 4 slots per pilot. Collisions reuse the original
@@ -194,14 +198,14 @@ hardware-driven (envelope + sweep); `FED4` meant to ramp its noise but clears `$
   showed there). The RAM scores were never wrong. The variables now live in the CHR-copy filler
   `$0347–$037F`; `build.py` checks every new variable against `src/original_ram.txt` (traced runtime use
   of the original) besides the zero-page list.
-- **RC4 overdrive (W4)**: 30 s of normal play (seconds `W4_SEC` × 60 frames `W4_FRM`, counted in
+- **RC4 overdrive (W4)** – *Superseded by RC6* (READY by points, start with the next stage once its formation is drawn, 12 s; see "RC6 overdrive start" below). RC4: 30 s of normal play (seconds `W4_SEC` × 60 frames `W4_FRM`, counted in
   `CoopPre` only in sub-state 8: a pause, the READY / respawn / stage-change sequences don't count), once
   per life (`W4_USED`), then W3. Every shot keeps the level it was fired with (`BUL_LV`: speed, laser
   tile), so lasers in flight finish as lasers; new shots use W3's 3 slots. x2: `ScoreAdd` computes the
   points (`E80F`/`E821`), doubles them when `BY_SHOT` (set by `BulletOwnerSlot`) and the owner is on W4
   (tens/hundreds with carry into the thousands digit `$56`), adds them once with `E841` and runs
   `AfterScore` once (boost/no-death points, extra lives, HUD).
-- **RC4 aggression**: no stored flag – every hook tests `W4_SEC` of both pilots, so all effects stop
+- **RC4 aggression** – *partly superseded by RC6* (the stronger profile below; the "no stored flag" design is kept): no stored flag – every hook tests `W4_SEC` of both pilots, so all effects stop
   with the last overdrive (and are byte-for-byte inert without one, tested). +25 % solo attack attempts
   (`AtkGate`; the flagship timer is not stepped twice), solo attacks not blocked by the flagship window
   (`SoloGate`; the slot limits stay the stage's), dives +14 % (`DiveBoost`: on odd frames +1 px for a
@@ -209,7 +213,7 @@ hardware-driven (envelope + sweep); `FED4` meant to ramp its noise but clears `$
   overdrive alone (`AimDiver` 3 of 4 dives, `BulletAimX` 3 of 4 shots). Measured from one saved
   moment, 90 s, P2 in overdrive: dive starts 27 → 38 (+41 %), dive speed 1.00 → 1.14 px/frame, dives
   heading to P2's side 26 % → 50 %, enemy shots toward P2 7 % → 49 %. Damage is unchanged; shields stay.
-- **RC4 shot colours**: no sprite palette had a free colour; changing palette 2 colour 3 (purple
+- **RC4 shot colours** – *Superseded by RC5* (P1 green `$2A` instead of yellow `$28`, same palette slot): no sprite palette had a free colour; changing palette 2 colour 3 (purple
   aliens' small diving details) was the least visible option. Every alternative changed something
   bigger: the P2 ship's nose (palette 0 colour 3), enemy bullets and stars (palette 0 colour 1).
 - **RC5 player colours and ships** (analysis of all sprites drawn in 36 000 frames of co-op and 1P play,
@@ -325,7 +329,7 @@ hardware-driven (envelope + sweep); `FED4` meant to ramp its noise but clears `$
   `FireShot` now updates the counter every frame, stops it at 0 (press used up) and re-arms it only on a
   release; a press while all shots fly, or while the pilot is away, is used up. `FireRearm` clears it when
   a ship comes back with the button held (P1's READY sequence does not run `FireShot`).
-- **Stage clear (RC2)**: the clear comes from `FA52`→`FC1A`, the same path as a lost P1 ship (`E94D`
+- **Stage clear (RC2; free W2 since RC6 in both modes)**: the clear comes from `FA52`→`FC1A`, the same path as a lost P1 ship (`E94D`
   `LDA $9F / ORA $4F`), so a pilot can be hit (exploding or waiting) at that moment. Such a pilot got the
   free W2 before and kept it after the respawn; RC2–RC3 required `PilotAlive`. RC4 (user decision, with W2
   now kept after a death): the free W2 needs `PilotComing` (in play, or hit with a reserve ship); point

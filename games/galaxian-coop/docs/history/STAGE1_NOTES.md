@@ -1,6 +1,9 @@
+> **Historical (Polish).** Notes on the experimental stage 1 (October 2026), superseded by Stage 2 and
+> all later versions; the commands and the `$07F0` buffer described here are no longer used.
+
 # Galaxian NES DX — etap 1 (eksperymentalny, historyczny)
 
-> Zastąpione przez Stage 2 – patrz CHANGELOG.md. Bufor `$07F0` okazał się zajęty przez grę.
+> Zastąpione przez Stage 2 – patrz [CHANGELOG.md](../CHANGELOG.md). Bufor `$07F0` okazał się zajęty przez grę.
 
 ## Docelowa mechanika
 - Dwa statki jednocześnie, sterowanie P1/P2.

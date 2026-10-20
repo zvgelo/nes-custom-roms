@@ -1,5 +1,12 @@
 # Galaxian Coop – raport z implementacji (RC6)
 
+> **Dokument historyczny (po polsku).** Raport z kolejnych wersji kandydujących RC1–RC6, pisany w trakcie
+> rozwoju. Zasady opisane w sekcjach RC1–RC5 (np. W4 na 30 s uruchamiane od razu po zdobyciu punktów,
+> W3 za 5000, brak tarczy w 1P) są **nieaktualne** – obowiązują zasady RC6 opisane w
+> [README](../README.md) i w sekcji R6 poniżej. Testy manualne były wykonywane w emulatorze; konkretne
+> stanowisko testowe nie jest tu opisywane. Identyfikatory commitów cytowane w raporcie pochodzą z historii
+> sprzed porządkowania (squash 2026-10-20) – odpowiadające im opublikowane commity: [history/COMMIT_MAP.md](history/COMMIT_MAP.md).
+
 Data: 2026-10-19. Branch: `game/galaxian-coop` (bez merge do `main`, bez remote, bez push).
 Wersja: **RC6** – jeden zestaw zasad dla `1 PILOT` i co-op; Overdrive READY → start w następnym etapie,
 12 s, natychmiastowy kontratak, mocniejsza agresja; naprawa dema.
@@ -9,7 +16,7 @@ W3 za 4000, licznik etapu. Sekcja R6 opisuje RC6, R5 – RC5, R4 – RC4, R3 –
 zmienione w RC6). Autor moda: Zvgelo. Szczegóły techniczne: [REVERSE_ENGINEERING.md](REVERSE_ENGINEERING.md),
 [MEMORY_MAP.md](MEMORY_MAP.md), testy i pomiary: [TESTING.md](TESTING.md).
 
-## R6. RC6 – wspólne zasady 1P/co-op i nowy Overdrive
+## R6. RC6 – wspólne zasady 1P/co-op i nowy Overdrive (aktualne)
 
 ### R6.1 Pliki
 
@@ -172,7 +179,7 @@ Na `game/galaxian-coop`, od najstarszego (bez merge do `main`, bez push, bez rem
 - Start 21 klatek (0,35 s) po pierwszej klatce gry nowego etapu – wcześniej formacji nie ma na ekranie.
 - RC4 „ataki w oknie flagowca” usunięte na rzecz `SoloLimit` (stabilniejszy profil).
 
-## R5. RC5 – tożsamość wizualna pilotów
+## R5. RC5 – tożsamość wizualna pilotów — *historyczne, zasady zastąpione przez RC6*
 
 ### R5.1 Pliki
 
@@ -282,7 +289,7 @@ są dokładne, a wiersze nametable P1 są takie jak przed śmiercią.
   będą trochę inne (FCEUmm: odcień sprawdzony testem).
 - RC5 nie jest zaakceptowane przed testem manualnym na emulatorze.
 
-## R4. RC4
+## R4. RC4 — *historyczne, zasady zastąpione przez RC6*
 
 ### R4.1 Pliki
 
@@ -504,7 +511,7 @@ merge do `main`, bez remote/push.
   `NmiGuard`); w pomiarach 0 klatek opóźnienia.
 - Mesen 2, RetroArch, manual test setup i sprzęt nie testowane przez autora.
 
-## R3. RC3
+## R3. RC3 — *historyczne, zasady zastąpione przez RC6*
 
 ### R3.1 Pliki
 
@@ -637,7 +644,7 @@ częstotliwości logiki. Limit klatek opóźnienia (`NmiGuard`, 8) bez zmian.
   ograniczenie zmieniłoby tempo odświeżania HUD.
 - Pozostałe ograniczenia RC2 (0.9) i RC1 (8) bez zmian.
 
-## 0. RC2
+## 0. RC2 — *historyczne, zasady zastąpione przez RC6*
 
 ### 0.1 Pliki
 
@@ -770,7 +777,7 @@ oraz commit dokumentacji RC2.
     przyszłości coś innego trafiło do tego obszaru tła, też by migało.
   - Pozostałe ograniczenia RC1 bez zmian (sekcja 8).
 
-## 1. Podsumowanie (RC1)
+## 1. Podsumowanie (RC1) — *historyczne, zasady zastąpione przez RC6*
 
 Wszystkie punkty specyfikacji v1.0 są zaimplementowane w `src/asm/coop.asm` i pokryte testami
 automatycznymi w emulatorze cynes (**45/45 OK**). Gra nie była testowana w Mesen 2, RetroArch,
@@ -786,7 +793,7 @@ w teście manualnym ani na sprzęcie – te testy zostają po stronie użytkowni
 ROM: NES 2.0, mapper 0 (NROM-256), 32 KiB PRG + 8 KiB CHR. Nowy kod: 3 446 bajtów w `$8000–$9FFF`,
 oryginalny program w `$E000–$FFFF` zmieniony tylko w 37 hookach (135 bajtów), każdy sprawdzany przy buildzie.
 
-## 2. Zrealizowane funkcje
+## 2. Zrealizowane funkcje — *historyczne, zasady zastąpione przez RC6*
 
 ### Tryby
 - **1 PILOT** – oryginalna gra + wspólne systemy: HUD `Xn`/`Wn`, boosty W1–W4, dodatkowe życia.
@@ -842,7 +849,7 @@ Logo `GALAXIAN` bez zmian; ukośna plakietka `CO-OP` (sprite'y) przy krawędzi l
 białym błyskiem (8 z 64 klatek). Menu `1 PILOT` / `2 PILOTS CO-OP`. Linia `HACK BY ZVGELO ©2026`
 pod napisami Namco, które zostały.
 
-## 3. Naprawione błędy
+## 3. Naprawione błędy — *historyczne, zasady zastąpione przez RC6*
 
 | Błąd | Przyczyna | Poprawka |
 |---|---|---|
@@ -852,7 +859,7 @@ pod napisami Namco, które zostały.
 | Reset gry przy przekroczeniu czasu NMI | watchdog oryginału (`E22F`) | `NmiGuard`: jedna klatka opóźnienia, reset dopiero po 8 z rzędu |
 | `$07F0` (etap 1) | dane gry nadpisywane | hook usunięty, `$07F0` nieużywany, test regresji |
 
-## 4. Architektura
+## 4. Architektura — *historyczne, zasady zastąpione przez RC6*
 
 - Cała logika gry działa w NMI (jak w oryginale). Hooki `JSR`/`JMP` w kodzie oryginału prowadzą do nowego
   kodu (pełna tabela w REVERSE_ENGINEERING.md §3, adresy procedur w §4 i w pliku `.mlb`).
@@ -865,7 +872,7 @@ pod napisami Namco, które zostały.
   - PPU/CHR: 2 kafle statku P2, kafel lasera, 2 komórki logo przekierowane na pusty kafel (obraz bez zmian,
     sprawdzone pikselowo); wiersze komunikatów 1–2 i HUD w `$2000`, wiersze tytułu 16/18/28 w `$2800`.
 
-## 5. Wydajność
+## 5. Wydajność — *historyczne, zasady zastąpione przez RC6*
 
 - Zwykła gra (4 sesje × 2 min, losowe wejście), najgorsza klatka – iteracje wolnej pętli (~10 cykli):
   oryginał **349**, 1 PILOT **350**, co-op W1 **329**. Zapas praktycznie jak w oryginale.
@@ -882,7 +889,7 @@ pod napisami Namco, które zostały.
     + 13 (gwiazdy) = 64; dlatego gwiazd jest 13 zamiast 24. Limit 8 sprite'ów na linię
     może powodować migotanie przy wielu nurkach obok P2 (jak w oryginale przy nurkach).
 
-## 6. Testy
+## 6. Testy — *historyczne, zasady zastąpione przez RC6*
 
 - **Automatyczne (wykonane)**: `tests/test_coop.py` – 45 testów (7 buildu, 38 emulatora), wynik 45/45 OK.
   Pokrycie: build/BPS, CHR, poprawki grafiki, tryby, co-op, Game Over, HUD żyć, 9 testów Life Sharing,
@@ -895,20 +902,20 @@ pod napisami Namco, które zostały.
   - **Nie wykonane**: Mesen 2 (także import `.mlb`), RetroArch, handheld PC, sprzęt, dźwięk,
     dwa fizyczne pady, długie sesje gry przez człowieka. Wynik z cynes nie jest potwierdzeniem dla RetroArcha.
 
-## 7. Commity (branch `game/galaxian-coop`, od najnowszego)
+## 7. Commity (branch `game/galaxian-coop`, od najnowszego) — *historyczne, zasady zastąpione przez RC6*
 
 `Update tools list`, `Merge Mario docs`, `Add Galaxian build guide`, `Rename outputs, update BPS`,
 `Add boost and banner tests`, `Add W4, banners, spawns, badge`, `Add weapon boost`, `Unify lives display`,
 `Fix stray HUD tile`, `Add coop tests`, `Add title credits`, `Add life sharing`, `Improve lives HUD`,
 `Fix top screen artifacts`, wcześniejsze: etap 2, asembler, BPS, testy, dokumentacja.
-Branch `game/super-mario-coop`: `Document ROM patching`, `Add Mario build guide` (włączone do Galaxian
-przez `Merge Mario docs`). `main` bez zmian.
+Branch `game/super-mario-coop`: `Document ROM patching`, `Add Mario build guide` (wtedy włączone do Galaxian
+przez `Merge Mario docs`; ten merge usunięto przy porządkowaniu historii – zob. [history/COMMIT_MAP.md](history/COMMIT_MAP.md)). `main` bez zmian.
 
 Odstępstwo od planu commitów: część zmian z jednej sesji pracy (W4, komunikaty, pozycje, plakietka,
 optymalizacje CPU, `NmiGuard`) trafiła do jednego commitu `Add W4, banners, spawns, badge`, bo powstawały
 równolegle w tym samym pliku; nie przepisywałem historii, żeby je rozdzielić.
 
-## 8. Ograniczenia i odstępstwa od specyfikacji
+## 8. Ograniczenia i odstępstwa od specyfikacji — *historyczne, zasady zastąpione przez RC6*
 
 - Jedno trafienie pocisku na klatkę: drugie trafienie w tej samej klatce liczy się klatkę później.
   - Zapas CPU w skrajnym obciążeniu W4 jest mały (15 iteracji); gdyby go zabrakło, gra pokaże pojedynczą
@@ -920,7 +927,7 @@ równolegle w tym samym pliku; nie przepisywałem historii, żeby je rozdzielić
   - Limit 9 żyć (jedna cyfra).
   - Plakietka `CO-OP` to sprite'y (nie zmienia CHR logo); jej „animacja” to subtelny błysk, nie ruch.
 
-## 9. Rekomendacje
+## 9. Rekomendacje — *historyczne, zasady zastąpione przez RC6*
 
 1. Test w Mesen 2 i manualny test na emulatorze według list z TESTING.md (szczególnie 1. linia ekranu w teście manualnym,
    dwa pady, W4 w obu statkach).

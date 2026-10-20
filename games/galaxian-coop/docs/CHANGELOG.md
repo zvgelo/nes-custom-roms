@@ -1,7 +1,31 @@
 # Changelog – Galaxian Coop
 
 Output of each version: `build/Galaxian_Coop.nes` from `Galaxian (Japan).nes`
-(SHA-256 `1188cedf…3613e`). Earlier versions can be rebuilt from their git commit.
+(SHA-256 `1188cedf…3613e`). Earlier versions can be rebuilt from their git commit; commit IDs quoted
+below are from the development history before the 2026-10-20 clean-up – see
+[history/COMMIT_MAP.md](history/COMMIT_MAP.md) for the published commit of each.
+
+## 2026-10-20 – license, README redesign and documentation audit (no change to the game)
+
+- MIT License for the project's own work (`LICENSE` in the repository root), `THIRD_PARTY_NOTICES.md` for
+  what it does not cover (the original game, quoted original bytes, screenshots).
+- README redesigned (hero artwork, READY/ACTIVE side by side, weapon and overdrive tables; laser colour
+  corrected: pilot's colour, not red); Polish translation `README_PL.md`.
+- Documentation audit: TESTING reduced to the current RC6 state (older results in
+  `docs/history/TESTING_HISTORY.md`), MEMORY_MAP status/message rows updated, superseded design notes
+  labelled in REVERSE_ENGINEERING, historical sections labelled in IMPLEMENTATION_REPORT,
+  `STAGE1_NOTES.md` moved to `docs/history/`, `docs/history/COMMIT_MAP.md` added.
+- Code, patch and ROM unchanged: SHA-256 `7e5d4fd1…`, BPS 5213 bytes.
+
+## 2026-10-20 – public documentation (no change to the game)
+
+- README rewritten for a public repository: rules of RC6 (READY → next stage → 12-second overdrive with
+  the counter-attack), controls, installation by BPS patch or from source, generic emulator setup,
+  screenshots. Root README in English for both games, with a legal notice.
+- Screenshots in `assets/screenshots/`: frames of the RC6 ROM in the cynes emulator (×3, no filtering).
+- References to one private test setup replaced by neutral wording ("manual emulator testing");
+  IMPLEMENTATION_REPORT marked as historical (RC1–RC5 rules superseded).
+- Code, patch and ROM unchanged: SHA-256 `7e5d4fd1…`, BPS 5213 bytes.
 
 ## 2026-10-19 – RC6: one rule set for 1 PILOT and co-op, overdrive READY → next stage (branch `game/galaxian-coop`)
 
@@ -238,7 +262,7 @@ Result: SHA-256 `9e87f49b320547c96663e810196c87c78bfb714c040fa12596b8f33bced3ee5
   4th frame. See TESTING.md for measurements.
 - Build output renamed to `Galaxian_Coop.nes` / `.mlb` / `.bps`.
 
-## 2026-10-18 – Stage 2 (commit `3080e8d`, branch `game/galaxian-coop`)
+## 2026-10-18 – Stage 2 (commit `3080e8d`, published as part of `e09f2be`, branch `game/galaxian-coop`)
 
 Result: SHA-256 `eb19e3ef1519b20da9e3a9c16c9e4cadf1a6b7725d61adfb27d875ad2db88159`.
 
