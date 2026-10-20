@@ -5,6 +5,10 @@
 *.unf
 *.zip
 
+# Third-party patches are not redistributed – e.g. the Super Mario Bros. Two Players Hack
+# .xdelta stays in games/super-mario-coop/private/ (see THIRD_PARTY_NOTICES.md)
+*.xdelta
+
 # Per-game local folders: private/ = original ROMs and other private inputs,
 # build/ = generated ROMs and build artefacts
 private/
